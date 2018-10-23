@@ -5,7 +5,7 @@ from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 
 # Register your models here.
 from .models import users, master_config, slave_config, workflow, WorkflowAuditSetting, \
-    DataMaskingColumns, DataMaskingRules, AliyunAccessKey, AliyunRdsConfig, Group
+    DataMaskingColumns, DataMaskingRules, AliyunAccessKey, AliyunRdsConfig, Group, ProjectResource
 
 
 # 主库配置管理
@@ -109,3 +109,9 @@ class AliyunAccessKeyAdmin(admin.ModelAdmin):
 @admin.register(AliyunRdsConfig)
 class AliyunRdsConfigAdmin(admin.ModelAdmin):
     list_display = ('cluster_name', 'rds_dbinstanceid',)
+
+
+# 项目资源管理
+@admin.register(ProjectResource)
+class DataMaskingRulesAdmin(admin.ModelAdmin):
+    list_display = ('cluster_name', 'db_name', 'table_name', 'group_list', 'create_time', 'update_time',)

@@ -1,0 +1,19 @@
+/*处理解决bootstrap的data-target在使用了layui框架后的不能正常使用的问题*/
+.modal-dialog {
+    position: relative;
+    top: 40px;
+}
+.modal-backdrop {
+    position: relative;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1040;
+    background-color: #000;
+}
+
+/*去掉鼠标移上超链接会显示下划线的问题*/
+.layui-nav-item > a:focus,a:hover{
+    text-decoration:none;
+}

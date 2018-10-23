@@ -13,7 +13,8 @@ from .const import Const, WorkflowDict
 from .sendmail import MailSender
 from .inception import InceptionDao
 from .aes_decryptor import Prpcrypt
-from .models import users, workflow, master_config
+from .models import users, workflow, master_config, slave_config, ProjectResource
+from .projectresource import integration_resource, sqlreview_new_createtable
 from .workflow import Workflow
 from .permission import role_required, superuser_required
 import logging
@@ -104,6 +105,7 @@ def execute_call_back(workflowId, clusterName, url):
     # 获取审核人
     reviewMan = workflowDetail.review_man
 
+    finalList = []
     dictConn = getMasterConnStr(clusterName)
     try:
         # 交给inception先split，再执行
@@ -122,6 +124,26 @@ def execute_call_back(workflowId, clusterName, url):
         workflowDetail.save()
     except Exception as e:
         logger.error(e)
+
+    # 获取项目集群
+    listAllCluster = slave_config.objects.all().order_by('cluster_name')
+    listAllClusterName = [ str(cluster.cluster_name) for cluster in listAllCluster ]
+    # 采取异步回调的方式进行资源整合，防止出现持续执行中的异常
+    t = Thread(target=integration_resource, args=(listAllClusterName,))
+    t.start()
+
+    # 把新创建的表自动授予个对应的选择的项目组
+    cluster_name = clusterName
+    group_name = workflowDetail.group_name
+    result_list = sqlreview_new_createtable(finalList)
+    for result in result_list:
+        if result["status"] == 0:
+            db_name = result["data"]["db_name"].strip("`")
+            table_name = result["data"]["table_name"].strip("`")
+            defaults_data = { "cluster_name":cluster_name, "db_name":db_name, "table_name":table_name, "group_list":group_name ,"sync_switch":0 }
+            # 添加对应的资源
+            ProjectResource.objects.update_or_create(cluster_name=cluster_name,db_name=db_name,table_name=table_name,defaults=defaults_data)
+            logger.info("Sqlreview new create table add resource (cluster_name:%s db_name:%s table_name:%s) success."%(cluster_name, db_name, table_name))
 
     # 如果执行完毕了，则根据settings.py里的配置决定是否给提交者和DBA一封邮件提醒，DBA需要知晓审核并执行过的单子
     if getattr(settings, 'MAIL_ON_OFF'):
@@ -176,3 +198,6 @@ def execute_job(workflowId, url):
     # 采取异步回调的方式执行语句，防止出现持续执行中的异常
     t = Thread(target=execute_call_back, args=(workflowId, clusterName, url))
     t.start()
+
+def testjobs():
+    print ("testjobs:%s,%s")

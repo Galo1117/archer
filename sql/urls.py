@@ -14,7 +14,7 @@ urlpatterns = [
     url(r'^allworkflow/$', views.allworkflow, name='allworkflow'),
 
     url(r'^autoreview/$', views.autoreview, name='autoreview'),
-    url(r'^detail/(?P<workflowId>[0-9]+)/$', views.detail, name='detail'),
+    url(r'^detail/(?P<workflowId>[0-9]+)/(?P<workflowType>[0-9]+)/$', views.detail, name='detail'),
     url(r'^passonly/$', views.passonly, name='passonly'),
     url(r'^executeonly/$', views.executeonly, name='executeonly'),
     url(r'^execute_skipinc/$', views.execute_skipinc, name='execute_skipinc'),
@@ -25,17 +25,24 @@ urlpatterns = [
     url(r'^sqladvisor/$', views.sqladvisor, name='sqladvisor'),
     url(r'^slowquery_advisor/$', views.sqladvisor, name='slowquery_advisor'),
     url(r'^queryapplylist/$', views.queryapplylist, name='queryapplylist'),
-    url(r'^queryapplydetail/(?P<apply_id>[0-9]+)/$', views.queryapplydetail, name='queryapplydetail'),
+    url(r'^queryapplydetail/(?P<apply_id>[0-9]+)/(?P<audit_type>[0-9]+)/$', views.queryapplydetail, name='queryapplydetail'),
     url(r'^queryuserprivileges/$', views.queryuserprivileges, name='queryuserprivileges'),
+    url(r'^executeuserprivileges/$', views.executeuserprivileges, name='executeuserprivileges'),
     url(r'^diagnosis_process/$', views.diagnosis_process, name='diagnosis_process'),
     url(r'^diagnosis_sapce/$', views.diagnosis_sapce, name='diagnosis_sapce'),
     url(r'^workflow/$', views.workflows, name='workflows'),
+    url(r'^workflowsdetailhash/$', views.workflowsdetailhash, name='workflowsdetailhash'),
     url(r'^workflowdetail/(?P<audit_id>[0-9]+)/$', views.workflowsdetail, name='workflowsdetail'),
     url(r'^dbaprinciples/$', views.dbaprinciples, name='dbaprinciples'),
     url(r'^charts/$', views.charts, name='charts'),
     url(r'^config/$', views.config, name='config'),
+    url(r'^configGroup/$', views.configGroup, name='configGroup'),
+    url(r'^projectresource/$',views.projectresource,name='projectresource'),
+    url(r'^groupQueryPermission/$', views.groupQueryPermission, name='groupQueryPermission'),
+    url(r'^getGroupQueryPermission/$', views.getGroupQueryPermission, name='getGroupQueryPermission'),
 
     url(r'^authenticate/$', views_ajax.authenticateEntry, name='authenticate'),
+    url(r'^authenticateitom/$', views_ajax.authenticateEntryITOM, name='authenticateitom'),
     url(r'^sqlworkflow/$', views_ajax.sqlworkflow, name='sqlworkflow'),
     url(r'^simplecheck/$', views_ajax.simplecheck, name='simplecheck'),
     url(r'^getMonthCharts/$', views_ajax.getMonthCharts, name='getMonthCharts'),
@@ -71,5 +78,4 @@ urlpatterns = [
 
     url(r'^add_sqlcronjob/$', jobs.add_sqlcronjob, name='add_sqlcronjob'),
     url(r'^del_sqlcronjob/$', jobs.del_sqlcronjob, name='del_sqlcronjob'),
-
 ]

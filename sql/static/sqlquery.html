@@ -5,6 +5,10 @@
         <div class="row clearfix">
             <form id="form-sqlquery" action="/sqlquery/" method="post" class="form-horizontal" role="form">
                 {% csrf_token %}
+                <!-- 用于存储UUID，无实际意义，隐藏 -->
+                <input id="btn-uuid" type="button" class="btn btn-info" style="display:none;" value="UUID"/>
+                <!-- 用于存储时间戳，无实际意义，隐藏 -->
+                <input id="btn-timestamp" type="button" class="btn btn-info" style="display:none;" value="0s"/>
                 <div class="col-md-9 column">
                     <pre id="sql_content_editor" class="ace_editor " style="min-height:350px"></pre>
                 </div>
@@ -49,6 +53,10 @@
                         <input id="btn-format" type="button" class="btn btn-info" value="美化"/>
                         <input id="btn-explain" type="button" class="btn btn-warning" value="执行计划"/>
                         <input id="btn-sqlquery" type="button" class="btn btn-success" value="SQL查询"/>
+                        <div id="btn-kill" class="btn-group" style="display:none;">
+                            <input id='btn-kill1' type="button" class="btn btn-default" value="0s"/>
+                            <input id='btn-kill2' type="button" class="btn btn-danger" value="终止查询"/>
+                        </div>
                     </div>
                 </div>
                 <div class="text-info">
@@ -294,25 +302,44 @@
             return result;
         }
 
+        // 设置提交按钮的显示属性
+        function btn_query_display(type) {
+            if ( type == "query" ){
+                $('#btn-format').css('display', 'none');
+                $('#btn-explain').css('display', 'none');
+                $('#btn-sqlquery').css('display', 'none');
+                $('#btn-kill').css('display', 'inline');
+            }else if( type == "kill" ){
+                $('#btn-kill').css('disabled', 'disabled');
+            }else{
+                $('#btn-format').css('display', 'inline');
+                $('#btn-explain').css('display', 'inline');
+                $('#btn-sqlquery').css('display', 'inline');
+                $('#btn-kill').css('display', 'none');
+            }
+        }
+
+
         //先做表单验证，验证成功再成功提交查询请求
         $("#btn-sqlquery").click(function () {
-                if (sqlquery_validate()) {
-                    $('input[type=button]').addClass('disabled');
-                    $('input[type=button]').prop('disabled', true);
-                    sqlquery();
-                }
+            if (sqlquery_validate()) {
+                sqlquery();
             }
-        );
+        });
 
         //先做表单验证，验证成功再成功提交执行计划查看
         $("#btn-explain").click(function () {
-                if (sqlquery_validate()) {
-                    $('input[type=button]').addClass('disabled');
-                    $('input[type=button]').prop('disabled', true);
-                    sqlquery('explain')
-                }
+            if (sqlquery_validate()) {
+                sqlquery('explain')
             }
-        );
+        });
+
+        //先做表单验证，验证成功再成功提交KILL指令
+        $("#btn-kill").click(function () {
+            if (sqlquery_validate()) {
+                sqlquery('kill')
+            }
+        });
 
         //先做表单验证，验证成功再成功提交格式化sql
         $("#btn-format").click(function () {
@@ -350,6 +377,22 @@
                 var table_name = $("#table_name").val();
                 sqlContent = "show create table " + table_name + ";"
             }
+            //KILL查询
+            else if (sql === 'kill') {
+                btn_query_display('kill');
+                var opera_type = 'kill';
+            }
+            // 当SQL不是kill指令的时候，改变提交按钮的显示属性和设置查询UUID
+            if (sql != 'kill'){
+                // 获取当前时间戳，用于计算SQL执行时间
+                var query_timestamp = Date.parse( new Date());
+                $('#btn-timestamp').val(query_timestamp);
+                var interval = setInterval('getQueryTime()', 1000);
+                // 设置提交按钮的显示属性
+                btn_query_display('query');
+                // 获取查询UUID唯一值
+                generateUUID();
+            }
             //校验SQL
             sqlContent = $.trim(sqlContent);
             if (sqlContent.toLowerCase().match(/^select/) || sqlContent.toLowerCase().match(/^show.*create.*table/) || sqlContent.toLowerCase().match(/^explain/)) {
@@ -362,11 +405,15 @@
                         db_name: $("#db_name").val(),
                         tb_name: $("#table_name").val(),
                         sql_content: sqlContent,
+                        opera_type: opera_type,
+                        query_uuid: $('#btn-uuid').val(),
                         limit_num: $("#limit_num").val()
                     },
                     complete: function () {
-                        $('input[type=button]').removeClass('disabled');
-                        $('input[type=button]').prop('disabled', false);
+                        // 设置提交按钮的显示属性
+                        btn_query_display();
+                        // 结束查询时间计数函数
+                        clearInterval(interval);
                     },
                     success: function (data) {
                         if (data.status === 0 || data.status === 2) {
@@ -435,11 +482,11 @@
                                     });
                                 });
                                 /*//插入选择框
-                                columns.unshift({
-                                    title: '',
-                                    field: 'checkbox',
-                                    checkbox: true
-                                });*/
+                                 columns.unshift({
+                                 title: '',
+                                 field: 'checkbox',
+                                 checkbox: true
+                                 });*/
                                 if (sqlContent.match(/^show.*create.*table/)) {
                                     //初始化表结构显示
                                     $("#" + ("query_result" + n)).bootstrapTable('destroy').bootstrapTable({
@@ -501,8 +548,10 @@
             }
             else {
                 alert('仅支持^select|^show.*create.*table|^explain语法，请联系管理员！');
-                $('input[type=button]').removeClass('disabled');
-                $('input[type=button]').prop('disabled', false);
+                // 设置提交按钮的显示属性
+                btn_query_display();
+                // 结束查询时间计数函数
+                clearInterval(interval);
             }
 
         }
@@ -512,6 +561,9 @@
         // 实例变更获取数据库
         $("#cluster_name").change(function () {
             sessionStorage.setItem('sql_query_cluster_name', $("#cluster_name").val());
+            // 加载遮罩层
+            $('.dbom-loadzone').show();
+            $('#load_p').html('加载中');
             //将数据通过ajax提交给获取db_name
             $.ajax({
                 type: "post",
@@ -521,6 +573,8 @@
                     cluster_name: $("#cluster_name").val()
                 },
                 complete: function () {
+                    // 取消遮罩层
+                    $('.dbom-loadzone').hide();
                 },
                 success: function (data) {
                     if (data.status === 0) {
@@ -556,6 +610,9 @@
 
         //数据库变更获取表名称
         $("#db_name").change(function () {
+            // 加载遮罩层
+            $('.dbom-loadzone').show();
+            $('#load_p').html('加载中');
             //将数据通过ajax提交给获取db_name
             $.ajax({
                 type: "post",
@@ -566,6 +623,8 @@
                     db_name: $("#db_name").val()
                 },
                 complete: function () {
+                    // 取消遮罩层
+                    $('.dbom-loadzone').hide();
                 },
                 success: function (data) {
                     if (data.status === 0) {
@@ -608,6 +667,25 @@
             });
         });
 
+        // 设置本次查询的唯一标识uuid
+        function generateUUID() {
+            var d = new Date().getTime();
+            var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = (d + Math.random()*16)%16 | 0;
+                d = Math.floor(d/16);
+                return (c=='x' ? r : (r&0x3|0x8)).toString(16);
+            });
+            $('#btn-uuid').val(uuid);
+        }
+
+        // 动态时间戳获取
+        function getQueryTime(){
+            var new_timestamp = Date.parse( new Date());
+            var old_timestamp = $('#btn-timestamp').val();
+            var query_time = ( new_timestamp - old_timestamp ) / 1000 + 's ';
+            $('#btn-kill1').val(query_time);
+        }
+
         //初始化
         $(document).ready(function () {
             //重置执行结果的tab数量
@@ -616,10 +694,11 @@
             sessionStorage.setItem('active_li_id', 'sqllog_tab');
             //默认获取查询历史
             get_querylog();
-
             //填充实例名
             $('#cluster_name').selectpicker();
             var myObject = {};
+            // Galo加于2018-04-18
+            sessionStorage.removeItem('sql_query_cluster_name');
             myObject.sql_query_cluster_name = sessionStorage.getItem('sql_query_cluster_name');
             if (myObject.sql_query_cluster_name) {
                 $("#cluster_name").selectpicker('val', myObject.sql_query_cluster_name).trigger("change");

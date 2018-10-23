@@ -14,19 +14,24 @@ from django.db import transaction
 import datetime
 import time
 
+from .api import obj_comparison, ifnull, list_handle
 from sql.extend_json_encoder import ExtendJSONEncoder
 from .aes_decryptor import Prpcrypt
+from .projectresource import PermissionVerification
 from .sendmail import MailSender
 from .dao import Dao
 from .const import WorkflowDict
 from .inception import InceptionDao
 from .models import users, master_config, slave_config, QueryPrivilegesApply, QueryPrivileges, QueryLog, SlowQuery, \
-    SlowQueryHistory, Group
+    SlowQueryHistory, Group, ProjectResource, UserGroup, GroupQueryPrivileges
 from .data_masking import Masking
 from .workflow import Workflow
 from .permission import role_required, superuser_required
 from .aliyun_function import slowquery_review as aliyun_rds_slowquery_review, \
     slowquery_review_history as aliyun_rds_slowquery_review_history
+from .dao import ProcessQuery
+from django.core.cache import cache
+import logging
 
 dao = Dao()
 prpCryptor = Prpcrypt()
@@ -34,6 +39,7 @@ inceptionDao = InceptionDao()
 datamasking = Masking()
 workflowOb = Workflow()
 mailSenderOb = MailSender()
+logger = logging.getLogger('default')
 
 
 # 查询权限申请用于工作流审核回调
@@ -53,7 +59,7 @@ def query_audit_call_back(workflow_id, workflow_status):
                 cluster_name=apply_queryset.cluster_name, db_name=db_name,
                 table_name=apply_queryset.table_list, valid_date=apply_queryset.valid_date,
                 limit_num=apply_queryset.limit_num, priv_type=apply_queryset.priv_type) for db_name in
-                apply_queryset.db_list.split(',')]
+                          apply_queryset.db_list.split(',')]
         # 表权限
         elif apply_queryset.priv_type == 2:
             insertlist = [QueryPrivileges(
@@ -61,7 +67,7 @@ def query_audit_call_back(workflow_id, workflow_status):
                 cluster_name=apply_queryset.cluster_name, db_name=apply_queryset.db_list,
                 table_name=table_name, valid_date=apply_queryset.valid_date,
                 limit_num=apply_queryset.limit_num, priv_type=apply_queryset.priv_type) for table_name in
-                apply_queryset.table_list.split(',')]
+                          apply_queryset.table_list.split(',')]
         QueryPrivileges.objects.bulk_create(insertlist)
 
 
@@ -70,6 +76,8 @@ def query_priv_check(loginUserOb, cluster_name, dbName, sqlContent, limit_num):
     finalResult = {'status': 0, 'msg': 'ok', 'data': {}}
     # 检查用户是否有该数据库/表的查询权限
     loginUser = loginUserOb.username
+    # 获取用户所在项目组集合
+    group_name_list = [ group['group_name'] for group in UserGroup.objects.filter(user_name=loginUser).values('group_name').distinct() ]
     if loginUserOb.is_superuser:
         user_limit_num = getattr(settings, 'ADMIN_QUERY_LIMIT')
         if int(limit_num) == 0:
@@ -86,10 +94,16 @@ def query_priv_check(loginUserOb, cluster_name, dbName, sqlContent, limit_num):
                                                        valid_date__gte=datetime.datetime.now(), is_deleted=0)
         # 无整库权限再验证表权限
         if len(db_privileges) == 0:
+            # 个人权限
             tb_privileges = QueryPrivileges.objects.filter(user_name=loginUser, cluster_name=cluster_name,
                                                            db_name=dbName, table_name=tb_name, priv_type=2,
                                                            valid_date__gte=datetime.datetime.now(), is_deleted=0)
-            if len(tb_privileges) == 0:
+            # 所属组权限
+            tb_group_privileges = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list, cluster_name=cluster_name,
+                                                           db_name=dbName, table_name=tb_name,
+                                                           valid_date__gte=datetime.datetime.now())
+
+            if len(tb_privileges) == 0 and len(tb_group_privileges) == 0:
                 finalResult['status'] = 1
                 finalResult['msg'] = '你无' + dbName + '.' + tb_name + '表的查询权限！请先到查询权限管理进行申请'
                 return finalResult
@@ -110,9 +124,15 @@ def query_priv_check(loginUserOb, cluster_name, dbName, sqlContent, limit_num):
                                                          is_deleted=0)
                 # 无整库权限再验证表权限
                 if len(db_privileges) == 0:
+                    # 个人权限
                     tb_privileges = QueryPrivilegesOb.filter(db_name=table['db'], table_name=table['table'],
                                                              valid_date__gte=datetime.datetime.now(), is_deleted=0)
-                    if len(tb_privileges) == 0:
+                    # 所属组权限
+                    tb_group_privileges = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list,
+                                                                              cluster_name=cluster_name,
+                                                                              db_name=table['db'], table_name=table['table'],
+                                                                              valid_date__gte=datetime.datetime.now())
+                    if len(tb_privileges) == 0 and len(tb_group_privileges) == 0:
                         finalResult['status'] = 1
                         finalResult['msg'] = '你无' + table['db'] + '.' + table['table'] + '表的查询权限！请先到查询权限管理进行申请'
                         return finalResult
@@ -121,10 +141,14 @@ def query_priv_check(loginUserOb, cluster_name, dbName, sqlContent, limit_num):
         else:
             table_ref = None
             # 校验库权限，防止inception的语法树打印错误时连库权限也未做校验
-            privileges = QueryPrivileges.objects.filter(user_name=loginUser, cluster_name=cluster_name, db_name=dbName,
+            # 个人权限
+            privileges_person = QueryPrivileges.objects.filter(user_name=loginUser, cluster_name=cluster_name, db_name=dbName,
                                                         valid_date__gte=datetime.datetime.now(),
                                                         is_deleted=0)
-            if len(privileges) == 0:
+            # 所属组权限
+            privileges_group = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list, cluster_name=cluster_name, db_name=dbName,
+                                                        valid_date__gte=datetime.datetime.now())
+            if len(privileges_person) == 0 and len(privileges_group) == 0:
                 finalResult['status'] = 1
                 finalResult['msg'] = '你无' + dbName + '数据库的查询权限！请先到查询权限管理进行申请'
                 return finalResult
@@ -137,13 +161,21 @@ def query_priv_check(loginUserOb, cluster_name, dbName, sqlContent, limit_num):
         if table_ref:
             db_list = [table_info['db'] for table_info in table_ref]
             table_list = [table_info['table'] for table_info in table_ref]
-            user_limit_num = QueryPrivileges.objects.filter(user_name=loginUser,
+            user_limit_num_person = QueryPrivileges.objects.filter(user_name=loginUser,
                                                             cluster_name=cluster_name,
                                                             db_name__in=db_list,
                                                             table_name__in=table_list,
                                                             valid_date__gte=datetime.datetime.now(),
                                                             is_deleted=0).aggregate(Min('limit_num'))['limit_num__min']
-            if user_limit_num is None:
+            user_limit_num_group = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list,
+                                                            cluster_name=cluster_name,
+                                                            db_name__in=db_list,
+                                                            table_name__in=table_list,
+                                                            valid_date__gte=datetime.datetime.now()
+                                                            ).aggregate(Min('limit_num'))['limit_num__min']
+            user_limit_num = obj_comparison(user_limit_num_person, user_limit_num_group)
+
+            if user_limit_num == 0:
                 # 如果表没获取到则获取涉及库的最小limit限制
                 user_limit_num = QueryPrivileges.objects.filter(user_name=loginUser,
                                                                 cluster_name=cluster_name,
@@ -161,7 +193,7 @@ def query_priv_check(loginUserOb, cluster_name, dbName, sqlContent, limit_num):
         if int(limit_num) == 0:
             limit_num = user_limit_num
         else:
-            limit_num = min(int(limit_num), user_limit_num)
+            limit_num = min(int(limit_num), int(ifnull(user_limit_num, 0)))
     finalResult['data'] = limit_num
     return finalResult
 
@@ -182,6 +214,10 @@ def getClusterList(request):
 # 获取实例里面的数据库集合
 @csrf_exempt
 def getdbNameList(request):
+    # 获取用户信息
+    loginUser = request.session.get('login_username', False)
+    loginUserOb = users.objects.get(username=loginUser)
+    query_request_type =  request.POST.get('query_request_type', None)
     clusterName = request.POST.get('cluster_name')
     is_master = request.POST.get('is_master')
     result = {'status': 0, 'msg': 'ok', 'data': []}
@@ -194,15 +230,19 @@ def getdbNameList(request):
             result['msg'] = '找不到对应的主库配置信息，请配置'
             return HttpResponse(json.dumps(result), content_type='application/json')
 
-        try:
-            # 取出该实例主库的连接方式，为了后面连进去获取所有databases
-            listDb = dao.getAlldbByCluster(master_info.master_host, master_info.master_port, master_info.master_user,
-                                           prpCryptor.decrypt(master_info.master_password))
-            # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+        if loginUserOb.is_superuser or query_request_type == "query_permission_application":
+            try:
+                # 取出该实例主库的连接方式，为了后面连进去获取所有databases
+                listDb = dao.getAlldbByCluster(master_info.master_host, master_info.master_port, master_info.master_user,
+                                               prpCryptor.decrypt(master_info.master_password))
+                # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+                result['data'] = listDb
+            except Exception as msg:
+                result['status'] = 1
+                result['msg'] = str(msg)
+        else:
+            listDb = get_query_dbname(loginUser, clusterName)
             result['data'] = listDb
-        except Exception as msg:
-            result['status'] = 1
-            result['msg'] = str(msg)
 
     else:
         try:
@@ -212,15 +252,28 @@ def getdbNameList(request):
             result['msg'] = '找不到对应的从库配置信息，请配置'
             return HttpResponse(json.dumps(result), content_type='application/json')
 
-        try:
-            # 取出该实例的连接方式，为了后面连进去获取所有databases
-            listDb = dao.getAlldbByCluster(slave_info.slave_host, slave_info.slave_port, slave_info.slave_user,
-                                           prpCryptor.decrypt(slave_info.slave_password))
-            # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+        if loginUserOb.is_superuser or query_request_type == "query_permission_application":
+            try:
+                # 取出该实例的连接方式，为了后面连进去获取所有databases
+                listDb = dao.getAlldbByCluster(slave_info.slave_host, slave_info.slave_port, slave_info.slave_user,
+                                               prpCryptor.decrypt(slave_info.slave_password))
+                # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+                result['data'] = listDb
+            except Exception as msg:
+                result['status'] = 1
+                result['msg'] = str(msg)
+        else:
+            listDb = get_query_dbname(loginUser, clusterName)
             result['data'] = listDb
-        except Exception as msg:
-            result['status'] = 1
-            result['msg'] = str(msg)
+
+        if request.method == "POST":
+            pv = PermissionVerification(loginUser, loginUserOb)
+            cluster_name = request.POST.get('cluster_name', None)
+            change_type = request.POST.get('change_type', None)
+            if change_type == "change_cluster":
+                # 获取用户所属项目组DB信息
+                result = pv.get_db_info(cluster_name)
+                return HttpResponse(json.dumps(result), content_type='application/json')
 
     return HttpResponse(json.dumps(result), content_type='application/json')
 
@@ -228,10 +281,18 @@ def getdbNameList(request):
 # 获取数据库的表集合
 @csrf_exempt
 def getTableNameList(request):
+    # 获取用户信息
+    loginUser = request.session.get('login_username', False)
+    loginUserOb = users.objects.get(username=loginUser)
+    query_request_type = request.POST.get('query_request_type', None)
     clusterName = request.POST.get('cluster_name')
     db_name = request.POST.get('db_name')
     is_master = request.POST.get('is_master')
     result = {'status': 0, 'msg': 'ok', 'data': []}
+    # 判断权限级别是表级还是库级
+    priv_type_info = QueryPrivileges.objects.filter(user_name=loginUser, cluster_name=clusterName,db_name=db_name, valid_date__gte=datetime.datetime.now(), is_deleted=0).values('priv_type').distinct()
+    priv_type_list = [ priv_type_info[i]['priv_type'] for i in range(len(priv_type_info)) ]
+    priv_type=1 if 1 in priv_type_list else 2
 
     if is_master:
         try:
@@ -241,15 +302,19 @@ def getTableNameList(request):
             result['msg'] = '找不到对应的主库配置信息，请配置'
             return HttpResponse(json.dumps(result), content_type='application/json')
 
-        try:
-            # 取出该实例主库的连接方式，为了后面连进去获取所有的表
-            listTb = dao.getAllTableByDb(master_info.master_host, master_info.master_port, master_info.master_user,
-                                         prpCryptor.decrypt(master_info.master_password), db_name)
-            # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+        if loginUserOb.is_superuser or query_request_type == "query_permission_application" or int(priv_type) == 1:
+            try:
+                # 取出该实例主库的连接方式，为了后面连进去获取所有的表
+                listTb = dao.getAllTableByDb(master_info.master_host, master_info.master_port, master_info.master_user,
+                                             prpCryptor.decrypt(master_info.master_password), db_name)
+                # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+                result['data'] = listTb
+            except Exception as msg:
+                result['status'] = 1
+                result['msg'] = str(msg)
+        else:
+            listTb = get_query_tablename(loginUser, clusterName, db_name)
             result['data'] = listTb
-        except Exception as msg:
-            result['status'] = 1
-            result['msg'] = str(msg)
 
     else:
         try:
@@ -259,15 +324,19 @@ def getTableNameList(request):
             result['msg'] = '找不到对应的从库配置信息，请配置'
             return HttpResponse(json.dumps(result), content_type='application/json')
 
-        try:
-            # 取出该实例从库的连接方式，为了后面连进去获取所有的表
-            listTb = dao.getAllTableByDb(slave_info.slave_host, slave_info.slave_port, slave_info.slave_user,
-                                         prpCryptor.decrypt(slave_info.slave_password), db_name)
-            # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+        if loginUserOb.is_superuser or query_request_type == "query_permission_application" or int(priv_type) == 1:
+            try:
+                # 取出该实例从库的连接方式，为了后面连进去获取所有的表
+                listTb = dao.getAllTableByDb(slave_info.slave_host, slave_info.slave_port, slave_info.slave_user,
+                                             prpCryptor.decrypt(slave_info.slave_password), db_name)
+                # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
+                result['data'] = listTb
+            except Exception as msg:
+                result['status'] = 1
+                result['msg'] = str(msg)
+        else:
+            listTb = get_query_tablename(loginUser, clusterName, db_name)
             result['data'] = listTb
-        except Exception as msg:
-            result['status'] = 1
-            result['msg'] = str(msg)
 
     return HttpResponse(json.dumps(result), content_type='application/json')
 
@@ -470,6 +539,7 @@ def applyforprivileges(request):
 # 用户的查询权限管理
 @csrf_exempt
 def getuserprivileges(request):
+    priv_type = request.POST.get('priv_type')
     user_name = request.POST.get('user_name')
     limit = int(request.POST.get('limit'))
     offset = int(request.POST.get('offset'))
@@ -484,37 +554,95 @@ def getuserprivileges(request):
     result = {'status': 0, 'msg': 'ok', 'data': []}
     loginUser = request.session.get('login_username', False)
     loginUserOb = users.objects.get(username=loginUser)
+    # 获取当前用户所在项目组集合
+    group_name_list = [group['group_name'] for group in UserGroup.objects.filter(user_name=loginUser).values('group_name').distinct()]
+    # 获取选择用户所在项目组集合
+    select_group_name_list = [group['group_name'] for group in UserGroup.objects.filter(user_name=user_name).values('group_name').distinct()]
 
-    # 获取用户的权限数据
-    if loginUserOb.is_superuser:
-        if user_name != 'all':
-            privilegeslist = QueryPrivileges.objects.all().filter(user_name=user_name, is_deleted=0,
-                                                                  table_name__contains=search).order_by(
-                '-privilege_id')[offset:limit]
-            privilegeslistCount = QueryPrivileges.objects.all().filter(user_name=user_name, is_deleted=0,
-                                                                       table_name__contains=search).count()
+    if priv_type == "query":
+        # 获取用户的权限数据
+        if loginUserOb.is_superuser:
+            if user_name != 'all':
+                privilegeslist_person = QueryPrivileges.objects.all().filter(user_name=user_name, is_deleted=0,table_name__contains=search).order_by(
+                    '-privilege_id')
+                privilegeslist_group = GroupQueryPrivileges.objects.all().filter(group_name__in=select_group_name_list,table_name__contains=search).order_by(
+                    '-privilege_id')
+                privilegeslistAll = list_handle(privilegeslist_person, privilegeslist_group)
+            else:
+                privilegeslist_person = QueryPrivileges.objects.all().filter(is_deleted=0, table_name__contains=search).order_by(
+                    '-privilege_id')
+                privilegeslist_group = GroupQueryPrivileges.objects.all().filter(table_name__contains=search).order_by(
+                    '-privilege_id')
+                privilegeslistAll = list_handle(privilegeslist_person, privilegeslist_group)
         else:
-            privilegeslist = QueryPrivileges.objects.all().filter(is_deleted=0, table_name__contains=search).order_by(
-                '-privilege_id')[offset:limit]
-            privilegeslistCount = QueryPrivileges.objects.all().filter(is_deleted=0,
-                                                                       table_name__contains=search).count()
-    else:
-        privilegeslist = QueryPrivileges.objects.filter(user_name=loginUserOb.username, is_deleted=0).filter(
-            table_name__contains=search).order_by('-privilege_id')[offset:limit]
-        privilegeslistCount = QueryPrivileges.objects.filter(user_name=loginUserOb.username, is_deleted=0).filter(
-            table_name__contains=search).count()
+            privilegeslist_person = QueryPrivileges.objects.filter(user_name=loginUserOb.username, valid_date__gte=datetime.datetime.now(), is_deleted=0).filter(
+                table_name__contains=search).order_by('-privilege_id')
+            privilegeslist_group = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list, valid_date__gte=datetime.datetime.now()).filter(
+                table_name__contains=search).order_by('-privilege_id')
+            privilegeslistAll = list_handle(privilegeslist_person, privilegeslist_group)
 
-    # QuerySet 序列化
-    privilegeslist = serializers.serialize("json", privilegeslist)
-    privilegeslist = json.loads(privilegeslist)
-    privilegeslist_result = []
-    for i in range(len(privilegeslist)):
-        privilegeslist[i]['fields']['id'] = privilegeslist[i]['pk']
-        privilegeslist_result.append(privilegeslist[i]['fields'])
+        privilegeslist_result = privilegeslistAll[offset:limit]
+        privilegeslistCount = len(privilegeslistAll)
+        result = {"total": privilegeslistCount, "rows": privilegeslist_result}
+        # 返回查询结果
+        return HttpResponse(json.dumps(result), content_type='application/json')
+    elif priv_type == "execute":
+        # 获取用户的权限数据
+        if loginUserOb.is_superuser:
+            if user_name == 'all':
+                privilegeslist = list(ProjectResource.objects.filter(table_name__contains=search).values("cluster_name","db_name","table_name")
+                                      .order_by("cluster_name","db_name","table_name")[offset:limit])
+                for privileges in privilegeslist:
+                    privileges["user_name"]="ALL"
+                privilegeslistCount = QueryPrivileges.objects.filter(table_name__contains=search).count()
+            else:
+                group_list = [ group['group_name'] for group in UserGroup.objects.filter(user_name=user_name).values('group_name').distinct() ]
+                privilegeslistAll = []
+                for groupname in group_list:
+                    privilegeslist_tmp = list(ProjectResource.objects.filter(group_list__icontains=groupname, table_name__contains=search). \
+                        values("cluster_name","db_name","table_name"))
+                    privilegeslistAll = privilegeslistAll + privilegeslist_tmp
 
-    result = {"total": privilegeslistCount, "rows": privilegeslist_result}
-    # 返回查询结果
-    return HttpResponse(json.dumps(result), content_type='application/json')
+                # 先转字符串保证可以去重排序
+                priv = [ str(privilegeslist) for privilegeslist in privilegeslistAll ]
+                # 对权限列表进行去重
+                priv = list(set(priv))
+                # 排序完成后转成字典
+                priv = [ eval(privilegeslist) for privilegeslist in priv ]
+                # 排序
+                privilegeslistAll = sorted(priv,key=lambda priv: (priv['cluster_name'], priv['db_name'], priv['table_name']),reverse=False)
+                # 添加用户信息
+                for privilegeslist in privilegeslistAll:
+                    privilegeslist["user_name"] = user_name
+                privilegeslist = privilegeslistAll[offset:limit]
+                privilegeslistCount = len(privilegeslistAll)
+
+        else:
+            group_list = [group['group_name'] for group in
+                          UserGroup.objects.filter(user_name=loginUserOb.username).values('group_name').distinct()]
+            privilegeslistAll = []
+            for groupname in group_list:
+                privilegeslist_tmp = list(
+                    ProjectResource.objects.filter(group_list__icontains=groupname, table_name__contains=search). \
+                    values("cluster_name", "db_name", "table_name"))
+                privilegeslistAll = privilegeslistAll + privilegeslist_tmp
+            # 先转字符串保证可以去重排序
+            priv = [str(privilegeslist) for privilegeslist in privilegeslistAll]
+            # 对权限列表进行去重
+            priv = list(set(priv))
+            # 排序完成后转成字典
+            priv = [eval(privilegeslist) for privilegeslist in priv]
+            # 排序
+            privilegeslistAll = sorted(priv,key=lambda priv: (priv['cluster_name'], priv['db_name'], priv['table_name']),reverse=False)
+            # 添加用户信息
+            for privilegeslist in privilegeslistAll:
+                privilegeslist["user_name"] = loginUserOb.username
+            privilegeslist = privilegeslistAll[offset:limit]
+            privilegeslistCount = len(privilegeslistAll)
+
+        result = {"total": privilegeslistCount, "rows": privilegeslist}
+        # 返回查询结果
+        return HttpResponse(json.dumps(result), content_type='application/json')
 
 
 # 变更权限信息
@@ -554,6 +682,7 @@ def queryprivaudit(request):
     apply_id = int(request.POST['apply_id'])
     audit_status = int(request.POST['audit_status'])
     audit_remark = request.POST.get('audit_remark')
+    audit_type = int(request.POST.get('audit_type', '0'))
 
     if audit_remark is None:
         audit_remark = ''
@@ -576,9 +705,16 @@ def queryprivaudit(request):
 
     except Exception as msg:
         context = {'errMsg': msg}
-        return render(request, 'error.html', context)
+        if int(audit_type) == 1:
+            return HttpResponse(context)
+        else:
+            return render(request, 'error.html', context)
 
-    return HttpResponseRedirect(reverse('sql:queryapplydetail', args=(apply_id,)))
+    # if int(audit_type) == 1:
+    #     # 如果是HASH验证，审核完成后删除会话信息
+    #     del request.session['login_username']
+
+    return HttpResponseRedirect(reverse('sql:queryapplydetail', kwargs={'apply_id':auditInfo.workflow_id, 'audit_type':audit_type}))
 
 
 # 获取SQL查询结果
@@ -588,6 +724,8 @@ def query(request):
     sqlContent = request.POST.get('sql_content')
     dbName = request.POST.get('db_name')
     limit_num = request.POST.get('limit_num')
+    opera_type = request.POST.get('opera_type', None)
+    query_uuid = request.POST.get('query_uuid', None)
 
     finalResult = {'status': 0, 'msg': 'ok', 'data': {}}
 
@@ -619,8 +757,9 @@ def query(request):
             finalResult['msg'] = '仅支持^select|^show.*create.*table|^explain语法，请联系管理员！'
             return HttpResponse(json.dumps(finalResult), content_type='application/json')
 
-    # 取出该实例的连接方式,查询只读账号,按照分号截取第一条有效sql执行
+    # 取出该实例的连接方式,获取实列只读读账号和可写账号,按照分号截取第一条有效sql执行
     slave_info = slave_config.objects.get(cluster_name=cluster_name)
+    master_info = master_config.objects.get(cluster_name=cluster_name)
     sqlContent = sqlContent.strip().split(';')[0]
 
     # 查询权限校验
@@ -641,60 +780,74 @@ def query(request):
 
     # 执行查询语句,统计执行时间
     t_start = time.time()
-    sql_result = dao.mysql_query(slave_info.slave_host, slave_info.slave_port, slave_info.slave_user,
-                                 prpCryptor.decrypt(slave_info.slave_password), str(dbName), sqlContent, limit_num)
-    t_end = time.time()
-    cost_time = "%5s" % "{:.4f}".format(t_end - t_start)
 
-    sql_result['cost_time'] = cost_time
+    # 从库连接信息
+    slave_mysql_process = ProcessQuery(slave_info.slave_host, slave_info.slave_port, slave_info.slave_user,
+                                       prpCryptor.decrypt(slave_info.slave_password), str(dbName))
 
-    # 数据脱敏，同样需要检查配置，是否开启脱敏，语法树解析是否允许出错继续执行
-    t_start = time.time()
-    if settings.DATA_MASKING_ON_OFF:
-        # 仅对查询语句进行脱敏
-        if re.match(r"^select", sqlContent.lower()):
-            try:
-                masking_result = datamasking.data_masking(cluster_name, dbName, sqlContent, sql_result)
-            except Exception:
-                if settings.CHECK_QUERY_ON_OFF:
-                    finalResult['status'] = 1
-                    finalResult['msg'] = '脱敏数据报错,请联系管理员'
-                    return HttpResponse(json.dumps(finalResult), content_type='application/json')
-            else:
-                if masking_result['status'] != 0:
-                    if settings.CHECK_QUERY_ON_OFF:
-                        return HttpResponse(json.dumps(masking_result), content_type='application/json')
-
-    t_end = time.time()
-    masking_cost_time = "%5s" % "{:.4f}".format(t_end - t_start)
-
-    sql_result['masking_cost_time'] = masking_cost_time
-
-    finalResult['data'] = sql_result
-
-    # 成功的查询语句记录存入数据库
-    if sql_result.get('Error'):
-        pass
+    sql_result = {}
+    if opera_type == "kill":
+        # print ("KILL###########query_uuid:%s mysql_pid:%s" % (query_uuid, cache.get(query_uuid)))
+        query_id = cache.get(query_uuid)
+        logger.debug('query kill query_uuid:%s mysql_pid:%s' % (query_uuid, query_id))
+        conn = slave_mysql_process.connect()
+        slave_mysql_process.kill_mysql_pid(conn, query_id)
+        # 处理完数据，关闭数据库连接
+        conn.close()
     else:
-        query_log = QueryLog()
-        query_log.username = loginUser
-        query_log.db_name = dbName
-        query_log.cluster_name = cluster_name
-        query_log.sqllog = sqlContent
-        if int(limit_num) == 0:
-            limit_num = int(sql_result['effect_row'])
-        else:
-            limit_num = min(int(limit_num), int(sql_result['effect_row']))
-        query_log.effect_row = limit_num
-        query_log.cost_time = cost_time
-        # 防止查询超时
-        try:
-            query_log.save()
-        except:
-            connection.close()
-        query_log.save()
+        # 执行查询SQL
+        logger.info('Query sql: %s'%(sqlContent))
+        sql_result = slave_mysql_process.main(sqlContent, limit_num, cache, query_uuid)
 
-    # 返回查询结果
+    if len(sql_result) > 0:
+        t_end = time.time()
+        cost_time = "%5s" % "{:.4f}".format(t_end - t_start)
+        sql_result['cost_time'] = cost_time
+
+        # 数据脱敏，同样需要检查配置，是否开启脱敏，语法树解析是否允许出错继续执行
+        t_start = time.time()
+        if settings.DATA_MASKING_ON_OFF:
+            # 仅对查询语句进行脱敏
+            if re.match(r"^select", sqlContent.lower()):
+                try:
+                    masking_result = datamasking.data_masking(cluster_name, dbName, sqlContent, sql_result)
+                except Exception:
+                    if settings.CHECK_QUERY_ON_OFF:
+                        finalResult['status'] = 1
+                        finalResult['msg'] = '脱敏数据报错,请联系管理员'
+                        return HttpResponse(json.dumps(finalResult), content_type='application/json')
+                else:
+                    if masking_result['status'] != 0:
+                        if settings.CHECK_QUERY_ON_OFF:
+                            return HttpResponse(json.dumps(masking_result), content_type='application/json')
+
+        t_end = time.time()
+        masking_cost_time = "%5s" % "{:.4f}".format(t_end - t_start)
+        sql_result['masking_cost_time'] = masking_cost_time
+        finalResult['data'] = sql_result
+
+        # 成功的查询语句记录存入数据库
+        if sql_result.get('Error'):
+            pass
+        else:
+            query_log = QueryLog()
+            query_log.username = loginUser
+            query_log.db_name = dbName
+            query_log.cluster_name = cluster_name
+            query_log.sqllog = sqlContent
+            if int(limit_num) == 0:
+                limit_num = int(sql_result['effect_row'])
+            else:
+                limit_num = min(int(limit_num), int(sql_result['effect_row']))
+            query_log.effect_row = limit_num
+            query_log.cost_time = cost_time
+            # 防止查询超时
+            try:
+                query_log.save()
+            except:
+                connection.close()
+            query_log.save()
+
     return HttpResponse(json.dumps(finalResult, cls=ExtendJSONEncoder, bigint_as_string=True), content_type='application/json')
 
 
@@ -716,15 +869,15 @@ def querylog(request):
 
     # 查询个人记录，超管查看所有数据
     if loginUserOb.is_superuser:
-        sql_log_count = QueryLog.objects.all().filter(Q(sqllog__contains=search) | Q(username__contains=search)).count()
+        sql_log_count = QueryLog.objects.all().filter(~Q(sqllog__startswith='explain'), ~Q(sqllog__startswith='show'), Q(sqllog__contains=search) | Q(username__contains=search)).count()
         sql_log_list = QueryLog.objects.all().filter(
-            Q(sqllog__contains=search) | Q(username__contains=search)).order_by(
+            ~Q(sqllog__startswith='explain'), ~Q(sqllog__startswith='show'), Q(sqllog__contains=search) | Q(username__contains=search)).order_by(
             '-id')[offset:limit]
     else:
         sql_log_count = QueryLog.objects.filter(username=loginUser).filter(
-            Q(sqllog__contains=search) | Q(username__contains=search)).count()
+            ~Q(sqllog__startswith='explain'), ~Q(sqllog__startswith='show'), Q(sqllog__contains=search) | Q(username__contains=search)).count()
         sql_log_list = QueryLog.objects.filter(username=loginUser).filter(
-            Q(sqllog__contains=search) | Q(username__contains=search)).order_by('-id')[offset:limit]
+            ~Q(sqllog__startswith='explain'), ~Q(sqllog__startswith='show'), Q(sqllog__contains=search) | Q(username__contains=search)).order_by('-id')[offset:limit]
 
     # QuerySet 序列化
     sql_log_list = serializers.serialize("json", sql_log_list)
@@ -989,3 +1142,70 @@ def slowquery_review_history(request):
 
         # 返回查询结果
     return HttpResponse(json.dumps(result, cls=ExtendJSONEncoder, bigint_as_string=True), content_type='application/json')
+
+
+# 获取用户可访问集群列表
+def get_query_clustername(loginUser):
+    '''
+    获取用户可访问的集群列表信息
+    loginUser 登录用户名
+    '''
+    # 获取用户所在项目组集合
+    group_name_list = [ group['group_name'] for group in UserGroup.objects.filter(user_name=loginUser).values('group_name').distinct() ]
+    # 个人
+    cluster_name_person_list = QueryPrivileges.objects.filter(user_name=loginUser, valid_date__gte=datetime.datetime.now(), is_deleted=0).values('cluster_name').distinct()
+    listAllClusterName_person = [ cluster_name_person_list[i]["cluster_name"] for i in
+                                 range(len(cluster_name_person_list))]
+    # 默认组权限
+    cluster_name_group_list = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list, valid_date__gte=datetime.datetime.now()).values(
+        'cluster_name').distinct()
+    listAllClusterName_group = [cluster_name_group_list[i]["cluster_name"] for i in range(len(cluster_name_group_list))]
+    # 集合去重
+    listAllClusterName = list(set(listAllClusterName_person + listAllClusterName_group))
+    # 返回结果数据
+    return listAllClusterName
+
+
+# 获取用户可访问数据库列表
+def get_query_dbname(loginUser, clusterName):
+    '''
+    获取用户可访问的数据库列表信息
+    loginUser 登录用户名
+    clusterName 所选集群名称
+    '''
+    # 获取用户所在项目组集合
+    group_name_list = [ group['group_name'] for group in UserGroup.objects.filter(user_name=loginUser).values('group_name').distinct() ]
+    # 个人
+    list_db_person_info = QueryPrivileges.objects.filter(user_name=loginUser,cluster_name=clusterName,valid_date__gte=datetime.datetime.now(),is_deleted=0).values(
+        'db_name').distinct()
+    listDb_person = [list_db_person_info[i]["db_name"] for i in range(len(list_db_person_info))]
+    # 默认组权限
+    list_db_group_info = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list, cluster_name=clusterName,valid_date__gte=datetime.datetime.now()).values('db_name').distinct()
+    listDb_group = [list_db_group_info[i]["db_name"] for i in range(len(list_db_group_info))]
+    # 集合去重
+    listDb = list(set(listDb_person + listDb_group))
+    # 返回结果数据
+    return listDb
+
+
+# 获取用户可访问数据表列表
+def get_query_tablename(loginUser, clusterName, db_name):
+    '''
+    获取用户可访问的数据表列表信息
+    loginUser 登录用户名
+    clusterName 所选集群名称
+    db_name 所选数据库名
+    '''
+    # 获取用户所在项目组集合
+    group_name_list = [ group['group_name'] for group in UserGroup.objects.filter(user_name=loginUser).values('group_name').distinct() ]
+    # 个人
+    list_table_person_info = QueryPrivileges.objects.filter(user_name=loginUser, cluster_name=clusterName,db_name=db_name,valid_date__gte=datetime.datetime.now(),
+                                                     is_deleted=0).values('table_name').distinct()
+    listTb_person = [list_table_person_info[i]["table_name"] for i in range(len(list_table_person_info))]
+    # 默认组权限
+    list_table_person_info = GroupQueryPrivileges.objects.filter(group_name__in=group_name_list,cluster_name=clusterName,db_name=db_name,valid_date__gte=datetime.datetime.now()).values('table_name').distinct()
+    listTb_group = [list_table_person_info[i]["table_name"] for i in range(len(list_table_person_info))]
+    # 集合去重
+    listTb = list(set(listTb_person + listTb_group))
+    # 返回结果数据
+    return listTb

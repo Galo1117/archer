@@ -22,16 +22,27 @@
                                     </select>
                                 </div>
                             </div>
+                            <div id="div-project-group" class="form-group" style="display: none">
+                                <h5 class="control-label text-bold">配置项目：</h5>
+                                <div class="form-group">
+                                    <select id="add_project_group" name="group"
+                                            class="selectpicker show-tick form-control bs-select-hidden"
+                                            data-name="配置项目" data-placeholder="请选择配置类型:" required>
+                                        <option value="1" selected="selected">添加项目组</option>
+                                    </select>
+                                </div>
+                            </div>
+
                             <div id="div-workflow" class="form-group" style="display: none">
                                 <h5 class="control-label text-bold">工单类型：</h5>
                                 <div class="form-group">
                                     <select id="workflow_type" name="group"
                                             class="selectpicker show-tick form-control bs-select-hidden"
                                             data-name="工单类型" data-placeholder="请选择工单类型:" required>
-                                        <option value="{{ WorkflowDict.workflow_type.sqlreview }}" selected="selected">
-                                            {{ WorkflowDict.workflow_type.sqlreview_display }}</option>
-                                        <option value="{{ WorkflowDict.workflow_type.query }}">
-                                            {{ WorkflowDict.workflow_type.query_display }}</option>
+                                        <option value="{{ context.WorkflowDict.workflow_type.sqlreview }}" selected="selected">
+                                            {{ context.WorkflowDict.workflow_type.sqlreview_display }}</option>
+                                        <option value="{{ context.WorkflowDict.workflow_type.query }}">
+                                            {{ context.WorkflowDict.workflow_type.query_display }}</option>
                                     </select>
                                 </div>
                                 <h5 class="control-label text-bold">项目组：</h5>
@@ -54,25 +65,9 @@
                     <div class="panel-body">
                         <form class="form">
                             <div id="div-group-config" class=" form-inline form-group" style="display: none">
-                                <h5 class="control-label text-bold" style="color: red">
-                                    规则：<b>仅支持添加项目组，删除和编辑请到后台数据管理模块操作</b></h5>
-                                <br>
-                                <div class="form-group">
-                                    <select id="group" name="group"
-                                            class="selectpicker show-tick form-control bs-select-hidden"
-                                            data-name="请选择父级项目" data-placeholder="请选择父级项目:" data-live-search="true"
-                                            required>
-                                        <option value="is-empty" disabled="" selected="selected">请选择父级项目:</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <input type="text" class="form-control" id="group_name" placeholder="请输入项目名称">
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <button id="btn-group-add" class="btn btn-default">添加</button>
-                                </div>
+                                {% include 'project_config/add_project_group.html' %}
                             </div>
+
                             <div id="div-workflow-config" class=" form-inline form-group" style="display: none">
                                 <h5 class="control-label text-bold" style="color: red">
                                     规则：<b>选择多人即审核流为多级审核，按照选择顺序进行流转</b></h5>
@@ -113,6 +108,8 @@
 {% block js %}
     {% load staticfiles %}
     <script>
+        $("td,th").addClass("text-center");
+
         //list 转成树形json
         function listToTree(list, pid) {
             var ret = [];//一个存放结果的临时数组
@@ -162,17 +159,23 @@
         $("#config").change(function () {
             sessionStorage.setItem('config_type', $("#config").val());
             if ($("#config").val() === '1') {
-                $("#div-group").show();
+                $('#div-project-group').show();
                 $("#div-group-config").show();
                 $("#div-workflow").hide();
                 $("#div-workflow-config").hide();
             }
             else if ($("#config").val() === '2') {
-                $("#div-group").hide();
+                $('#div-project-group').hide();
                 $("#div-group-config").hide();
                 $("#div-workflow").show();
                 $("#div-workflow-config").show();
                 $("#workflow_type").trigger("change");
+            }
+        });
+
+        $("#add_project_group").change(function () {
+            if( $('#add_project_group').val() === '1' ){
+                $("#div-group-config").show();
             }
         });
 
@@ -196,9 +199,17 @@
         });
 
         // 清空审核人信息
-        $("#btn-workflow-config-clean").change(function () {
-            $("#group_auditors_text").val('')
+        $("#btn-workflow-config-clean").click(function () {
+            $("#group_auditors_text").val('');
+            clean_disabled();
         });
+
+        // 释放group_auditors之前的Disabled
+        function clean_disabled(){
+            $("#group_auditors option").attr({"disabled": false, "selected": false});
+            $('#group_auditors').selectpicker('render');
+            $('#group_auditors').selectpicker('refresh');
+        }
 
         // 切换工单类型获取对应项目组负责人
         $("#workflow_type").change(function () {
@@ -292,6 +303,7 @@
                     if (data.status === 0) {
                         //alert('修改成功');
                         $("#workflow_type").trigger("change")
+                        clean_disabled();
                     } else {
                         alert("status: " + data.status + "\nmsg: " + data.msg + data.data);
                     }

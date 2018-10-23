@@ -33,6 +33,9 @@ $("#btn-autoreview").click(function () {
 });
 
 function autoreview() {
+    // 加载遮罩层
+    $('.dbom-loadzone').show();
+    $('#load_p').html('加载中');
     //将数据通过ajax提交给后端进行检查
     $.ajax({
         type: "post",
@@ -44,6 +47,8 @@ function autoreview() {
             db_name: $("#db_name").val()
         },
         complete: function () {
+            // 取消遮罩层
+            $('.dbom-loadzone').hide();
             $("#btn-format").removeClass('disabled');
             $("#btn-format").prop('disabled', false);
             $("#btn-autoreview").removeClass('disabled');

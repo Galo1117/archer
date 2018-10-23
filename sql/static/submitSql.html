@@ -162,21 +162,34 @@
             //创建读取文件的对象
             var reader = new FileReader();
 
-            //创建文件读取相关的变量
-            var sqlFile;
-
             //为文件读取成功设置事件
-            reader.onload = function (e) {
-                sqlFile = e.target.result;
-                sqlFile = CryptoJS.enc.Base64.parse(sqlFile.substring(13));
-                sqlFile = sqlFile.toString(CryptoJS.enc.Utf8);
+            reader.onload = function() {
+                var sqlFile = this.result;
                 editor.setValue("");
                 editor.setValue(sqlFile);
                 editor.clearSelection();
             };
 
             //正式读取文件
-            reader.readAsDataURL(file);
+            reader.readAsText(file);
+
+            {#            //创建文件读取相关的变量#}
+            {#            var sqlFile;#}
+            {#            //为文件读取成功设置事件#}
+            {#            reader.onload = function (e) {#}
+            {#                sqlFile = e.target.result;#}
+            {#                alert(e.result);#}
+            {#                sqlFile = CryptoJS.enc.Base64.parse(sqlFile.substring(13));#}
+            {#                alert("aaaaaaaa");#}
+            {#                sqlFile = sqlFile.toString(CryptoJS.enc.Utf8);#}
+            {#                alert("bbbbbbb");#}
+            {#                editor.setValue("");#}
+            {#                editor.setValue(sqlFile);#}
+            {#                editor.clearSelection();#}
+            {#            };#}
+            {##}
+            {#            //正式读取文件#}
+            {#            reader.readAsDataURL(file);#}
         }
     </script>
     <!--ace -->
@@ -189,8 +202,8 @@
                 url: "/getdbNameList/",
                 dataType: "json",
                 data: {
+                    change_type: 'change_cluster',
                     cluster_name: $("#cluster_name").val(),
-                    is_master: true
                 },
                 complete: function () {
                     var pathname = window.location.pathname;
@@ -205,7 +218,7 @@
                     }
                 },
                 success: function (data) {
-                    if (data.status === 0) {
+                    if (data.status === 1) {
                         var result = data.data;
                         $("#db_name").empty();
                         var dbs = [];
@@ -235,6 +248,7 @@
             });
         });
     </script>
+
     <!--validate -->
     <script>
         function validateForm(element) {
@@ -400,7 +414,7 @@
             // 初始化上传控件
             init_upload();
             // 提示信息
-            editor.setValue("请在此提交SQL，请以分号结尾。");
+            editor.setValue("#请在此提交SQL，请以分号结尾。");
             editor.clearSelection();
             // 禁用提交按钮，点击检测后才激活
             $("#btn-submitsql").addClass('disabled');

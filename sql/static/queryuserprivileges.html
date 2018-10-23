@@ -2,14 +2,21 @@
 
 {% block content %}
     <!-- 自定义操作按钮-->
-    <div id="toolbar" class="bootstrap-select">
-        <div class="form-group">
+    <div id="toolbar" class="form-inline">
+        <div class="form-group bootstrap-select">
+            <select id="privType" class="form-control dropdown-menu-right selectpicker" onchange="window.location=this.value">
+                <option value="/queryuserprivileges/" selected="selected">SQL查询权限</option>
+                <option value="/executeuserprivileges/" >SQL执行权限</option>
+            </select>
+        </div>
+
+        <div class="form-group bootstrap-select">
             <select id=user_name class="form-control selectpicker show-tick bs-select-hidden " name="user_name_list"
                     data-live-search="true">
                 <option value="all" selected="selected">全部</option>
                 {% if loginUserOb.is_superuser %}
-                    {% for user in user_list %}
-                        <option value="{{ user.user_name }}">{{ user.user_name }}</option>
+                    {% for username in user_list %}
+                        <option value="{{ username }}">{{ username }}</option>
                     {% endfor %}
                 {% else %}
                     <option value="{{ loginUserOb.username }}">{{ loginUserOb.username }}</option>
@@ -118,23 +125,31 @@
                     function (params) {
                         return {
                             user_name: $("#user_name").val(),
+                            priv_type: "query",
                             limit: params.limit,
                             offset: params.offset,
                             search: params.search
                         }
                     },
                 columns: [{
-                    title: '权限id',
-                    field: 'id'
+                    title: '权限ID',
+                    field: 'id',
+                    formatter: function (value, row, index) {
+                        return index + 1;
+                    },
+                    align: 'center'
                 }, {
                     title: '用户名',
-                    field: 'user_name'
+                    field: 'user_name',
+                    align: 'center'
                 }, {
                     title: '实例',
-                    field: 'cluster_name'
+                    field: 'cluster_name',
+                    align: 'center'
                 }, {
                     title: '数据库',
-                    field: 'db_name'
+                    field: 'db_name',
+                    align: 'center'
                 }, {
                     title: '权限级别',
                     field: 'priv_type',
@@ -145,16 +160,24 @@
                         else {
                             return 'TABLE';
                         }
-                    }
+                    },
+                    align: 'center'
                 }, {
                     title: '表',
-                    field: 'table_name'
+                    field: 'table_name',
+                    align: 'center'
                 }, {
                     title: '结果集',
-                    field: 'limit_num'
+                    field: 'limit_num',
+                    align: 'center'
                 }, {
                     title: '有效时间',
-                    field: 'valid_date'
+                    field: 'valid_date',
+                    align: 'center'
+                },{
+                    title: '权限归属',
+                    field: 'ascription',
+                    align: 'center'
                 }, {
                     title: '操作',
                     field: 'id',
@@ -167,7 +190,8 @@
                                 "valid_date=\"" + row.valid_date + "\"\n" + "onclick=\"setInfo(this)\" " +
                                 "data-toggle=\"modal\" data-target=\"#deleted_privileges\">删除权限\n" + "</button>"
                         }
-                    }
+                    },
+                    align: 'center'
                 }],
                 onLoadSuccess: function () {
                 },

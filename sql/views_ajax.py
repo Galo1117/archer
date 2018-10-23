@@ -4,6 +4,7 @@ import re
 import simplejson as json
 import datetime
 import multiprocessing
+import urllib.parse
 
 import subprocess
 
@@ -26,6 +27,7 @@ from django.core import serializers
 from .dao import Dao
 from .const import Const, WorkflowDict
 from .inception import InceptionDao
+from .projectresource import PermissionVerification
 from .aes_decryptor import Prpcrypt
 from .models import users, master_config, workflow, Group
 from sql.sendmail import MailSender
@@ -69,7 +71,6 @@ def loginAuthenticate(username, password):
     else:
         # 登录
         user = authenticate(username=username, password=password)
-        print(type(user))
         # 登录成功
         if user:
             # 如果登录失败计数器中存在该用户名，则清除之
@@ -130,6 +131,46 @@ def authenticateEntry(request):
     return HttpResponse(json.dumps(result), content_type='application/json')
 
 
+#ITOM用户认证接口，用来验证用户名密码
+@csrf_exempt
+def authenticateEntryITOM(request):
+    """接收ITOM验证请求，然后把请求中的用户名密码传给loginAuthenticate去验证"""
+    # if request.META.has_key('HTTP_X_FORWARDED_FOR'):
+    #     ip = request.META['HTTP_X_FORWARDED_FOR']
+    # else:
+    #     ip = request.META['REMOTE_ADDR']
+    try:
+        ip = urllib.parse.urlparse(request.META.get("HTTP_REFERER", None)).netloc
+        # ip = re.findall(r'\d+.\d+.\d+.\d+', request.META.get("HTTP_REFERER",None))
+    except Exception as e:
+        ip = "NULL"
+        result = {'status': 4, 'msg': u'IP鉴权失败，非信任IP!', 'data': ''}
+
+    strUsername = request.GET.get('username')
+    strPassword = request.GET.get('password')
+    sessionExpiry = settings.SESSION_EXPIRY
+
+    if strUsername == "" or strPassword == "" or strUsername is None or strPassword is None:
+        result = {'status':2, 'msg':u'登录用户名或密码为空，请重新输入!', 'data':''}
+    elif settings.ITOM_HOST not in ip:
+        result = {'status': 4, 'msg': u'IP鉴权失败，非信任IP!', 'data': ''}
+    else:
+        correct_users = users.objects.filter(username=strUsername)
+        if len(correct_users) == 1 and correct_users[0].is_active and strPassword == correct_users[0].password:
+            result = {'status':0, 'msg':'ok', 'data':''}
+        else:
+            result = {'status':1, 'msg':u'用户名或密码错误，请重新输入！', 'data':''}
+
+    if result['status'] == 0:
+        request.session['login_username'] = strUsername
+        request.session.set_expiry(sessionExpiry)
+        return HttpResponseRedirect('/sqlquery/')
+    else:
+        return HttpResponse(result['msg'])
+
+    return HttpResponse(json.dumps(result), content_type='application/json')
+
+
 # 获取审核列表
 @csrf_exempt
 def sqlworkflow(request):
@@ -153,7 +194,7 @@ def sqlworkflow(request):
 
     # 全部工单里面包含搜索条件
     if navStatus == 'all':
-        if loginUserOb.is_superuser == 1:
+        if loginUserOb.is_superuser == 1 or loginUserOb.role == "DBA":
             listWorkflow = workflow.objects.filter(
                 Q(engineer__contains=search) | Q(workflow_name__contains=search)
             ).order_by('-create_time')[offset:limit].values("id", "workflow_name", "engineer", "status",
@@ -174,7 +215,7 @@ def sqlworkflow(request):
                 Q(engineer__contains=search) | Q(workflow_name__contains=search)
             ).count()
     elif navStatus in Const.workflowStatus.keys():
-        if loginUserOb.is_superuser == 1:
+        if loginUserOb.is_superuser == 1 or loginUserOb.role == "DBA":
             listWorkflow = workflow.objects.filter(
                 status=Const.workflowStatus[navStatus]
             ).order_by('-create_time')[offset:limit].values("id", "workflow_name", "engineer", "status",
@@ -231,35 +272,49 @@ def simplecheck(request):
         finalResult['msg'] = 'SQL语句结尾没有以;结尾，请重新修改并提交！'
         return HttpResponse(json.dumps(finalResult), content_type='application/json')
 
+    # 获取用户信息
+    loginUser = request.session.get('login_username', False)
+    loginUserOb = users.objects.get(username=loginUser)
+
     # 交给inception进行自动审核
-    try:
-        result = inceptionDao.sqlautoReview(sqlContent, clusterName, db_name)
-    except Exception as e:
+    pv = PermissionVerification(loginUser, loginUserOb)
+    # priv_rows_info, reviewResult = pv.check_resource_priv(sqlContent, clusterName, db_name, 1)
+    # 检测用户资源权限
+    if loginUserOb.is_superuser:
+        reviewResult = pv.check_resource_priv(sqlContent, clusterName, db_name, 1)
+    else:
+        reviewResult = pv.check_resource_priv(sqlContent, clusterName, db_name, 0)
+
+    result = reviewResult["data"]
+    if reviewResult["status"] == 1:
         finalResult['status'] = 1
-        finalResult['msg'] = str(e) + '\n请参照安装文档配置pymysql'
+        finalResult['msg'] = reviewResult["msg"]
         return HttpResponse(json.dumps(finalResult), content_type='application/json')
 
     if result is None or len(result) == 0:
         finalResult['status'] = 1
         finalResult['msg'] = 'inception返回的结果集为空！可能是SQL语句有语法错误'
         return HttpResponse(json.dumps(finalResult), content_type='application/json')
+
     # 要把result转成JSON存进数据库里，方便SQL单子详细信息展示
     column_list = ['ID', 'stage', 'errlevel', 'stagestatus', 'errormessage', 'SQL', 'Affected_rows', 'sequence',
                    'backup_dbname', 'execute_time', 'sqlsha1']
     rows = []
     CheckWarningCount = 0
     CheckErrorCount = 0
-    for row_index, row_item in enumerate(result):
+    for row_item in result:
         row = {}
-        row['ID'] = row_item[0]
-        row['stage'] = row_item[1]
         row['errlevel'] = row_item[2]
+        row['errormessage'] = row_item[4]
+
         if row['errlevel'] == 1:
             CheckWarningCount = CheckWarningCount + 1
         elif row['errlevel'] == 2:
             CheckErrorCount = CheckErrorCount + 1
+
+        row['ID'] = row_item[0]
+        row['stage'] = row_item[1]
         row['stagestatus'] = row_item[3]
-        row['errormessage'] = row_item[4]
         row['SQL'] = row_item[5]
         row['Affected_rows'] = row_item[6]
         row['sequence'] = row_item[7]
@@ -514,6 +569,7 @@ def groupauditors(request):
     group_name = request.POST.get('group_name')
     workflow_type = request.POST['workflow_type']
     result = {'status': 0, 'msg': 'ok', 'data': []}
+
     if group_id:
         auditors = workflowOb.auditsettings(group_id=int(group_id), workflow_type=workflow_type)
     elif group_name:

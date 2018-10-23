@@ -157,7 +157,7 @@
     {% endif %}
     <br>
     {% if workflowDetail.status == '等待审核人审核' %}
-        {% if loginUser == current_audit_user %}
+        {% if loginUser == current_audit_user  or loginUserOb.is_superuser == 1 %}
             <textarea id="remark" name="remark" class="form-control" data-name="审核备注"
                       placeholder="请填写驳回原因" rows=3></textarea>
             <br>
@@ -185,7 +185,18 @@
 
     {% elif workflowDetail.status == '审核通过' %}
         {% if loginUser == workflowDetail.engineer %}
-            <!--审核通过后提交人也可以执行SQL-->
+            <form id="form-cancel" action="/cancel/" method="post" style="display:inline-block;">
+                {% csrf_token %}
+                <input type="hidden" name="workflowid" value="{{ workflowDetail.id }}">
+                <input type="hidden" id="audit_remark" name="audit_remark" value="">
+                <input type="submit" onclick="loading(this)" class="btn btn-default" value="终止流程"/>
+            </form>
+
+        {% elif loginUserOb.role == 'DBA' %}
+            <textarea id="remark" name="remark" class="form-control" data-name="审核备注"
+                      placeholder="请填写驳回原因" rows=3></textarea>
+            <br>
+
             <form id="from-executeonly" action="/executeonly/" method="post" style="display:inline-block;">
                 {% csrf_token %}
                 <input type="hidden" name="workflowid" value="{{ workflowDetail.id }}">
@@ -199,31 +210,11 @@
                 <input type="hidden" id="audit_remark" name="audit_remark" value="">
                 <input type="submit" onclick="loading(this)" class="btn btn-default" value="终止流程"/>
             </form>
-
-        {% elif loginUser in reviewMan %}
-            <textarea id="remark" name="remark" class="form-control" data-name="审核备注"
-                      placeholder="请填写驳回原因" rows=3></textarea>
-            <br>
-
-            <form id="from-executeonly" action="/executeonly/" method="post" style="display:inline-block;">
-                {% csrf_token %}
-                <input type="hidden" name="workflowid" value="{{ workflowDetail.id }}">
-                <input type="button" id="btnExecuteOnly" class="btn btn-danger"
-                       value="立即执行"/>
-            </form>
-
-            <form id="form-cancel" action="/cancel/" method="post" style="display:inline-block;">
-                {% csrf_token %}
-                <input type="hidden" name="workflowid" value="{{ workflowDetail.id }}">
-                <input type="hidden" id="audit_remark" name="audit_remark" value="">
-                <input type="button" id="btnCancel" class="btn btn-default" value="终止流程"/>
-            </form>
         {% endif %}
 
     {% elif workflowDetail.status == '定时执行' %}
         {% if loginUser == workflowDetail.engineer %}
             <!--审核通过后提交人也可以执行SQL-->
-            <input type="button" class="btn btn-info" data-toggle="modal" data-target="#cronComfirm" value="执行时间变更"/>
             <form id="form-cancel" action="/cancel/" method="post" style="display:inline-block;">
                 {% csrf_token %}
                 <input type="hidden" name="workflowid" value="{{ workflowDetail.id }}">
@@ -231,7 +222,7 @@
                 <input type="submit" onclick="loading(this)" class="btn btn-default" value="终止流程"/>
             </form>
 
-        {% elif loginUser in reviewMan %}
+        {% elif loginUserOb.role == 'DBA' %}
             <textarea id="remark" name="remark" class="form-control" data-name="审核备注"
                       placeholder="请填写驳回原因" rows=3></textarea>
             <br>

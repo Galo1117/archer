@@ -111,12 +111,18 @@
                 表清单
             {% endif %}
         </div>
-        <div class="panel-body">
-            {% if workflowDetail.priv_type == 1 %}
-                {% format_str workflowDetail.db_list %}
-            {% elif workflowDetail.priv_type == 2 %}
-                {% format_str workflowDetail.table_list %}
-            {% endif %}
+{#        <div class="panel-body">#}
+{#            {% if workflowDetail.priv_type == 1 %}#}
+                {#                {% format_str workflowDetail.db_list %}#}
+{#                <textarea id="db_list" class="form-control" placeholder="申请库清单" rows=6 disabled="disabled"#}
+{#                          required>{{ workflowDetail.db_list }}</textarea>#}
+{#            {% elif workflowDetail.priv_type == 2 %}#}
+                {#                {% format_str workflowDetail.table_list %}#}
+{#                <textarea id="table_list" class="form-control" placeholder="申请表清单" rows=6 disabled="disabled"#}
+{#                          required>{{ workflowDetail.table_list }}</textarea>#}
+{#            {% endif %}#}
+{#        </div>#}
+        <div id='resource_list' class="panel-body">
         </div>
     </div>
     <br>
@@ -145,6 +151,22 @@
 
 {% block js %}
     <script>
+        //初始化数据
+        $(document).ready(function () {
+            var priv_type = "{{ workflowDetail.priv_type }}";
+            if ( priv_type == 1 ){
+                var dblist = "{{ workflowDetail.db_list }}";
+                var dblist = dblist.replace(/\r/g, '<br>').replace(/\n/g, '<br>').replace(/\s/g, '&nbsp;').replace(/,/g, '<br>');
+                $('<p>' + dblist + '</p>').appendTo($('#resource_list'));
+            }
+            else if ( priv_type == 2 ){
+                var tablelist = "{{ workflowDetail.table_list }}";
+                var tablelist = tablelist.replace(/\r/g, '<br>').replace(/\n/g, '<br>').replace(/\s/g, '&nbsp;').replace(/,/g, '<br>');
+                $('<p>' + tablelist + '</p>').appendTo($('#resource_list'));
+                console.log(tablelist);
+            }
+        });
+
         // 按钮禁用
         function loading(obj) {
             $(obj).button('loading').delay(2500).queue(function () {

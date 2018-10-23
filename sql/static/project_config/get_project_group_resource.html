@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <style type="text/css">
+        td{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+    </style>
+
+    <div class="wrapper wrapper-content animated fadeInRight">
+        <div class="row">
+            <div class="col-sm-12">
+                <div class="ibox float-e-margins">
+                    <div class="ibox-content">
+
+                        <div class="panel-options" style="margin-bottom:10px;">
+                            <ul class="nav nav-tabs">
+                                <li class="active"><a href="/projectresource/" class="text-center"><i class="fa fa-cloud-upload"></i> 项目SQL上线资源获取 </a></li>
+                                <li ><a href="/groupQueryPermission/" class="text-center"><i class="fa fa-search"></i> SQL查询权限配置 </a></li>
+                            </ul>
+                        </div>
+
+                        <div class="">
+                            <div class="col-sm-8" style="padding-left: 0">
+                                <label>
+                                    <a type="button" class="btn btn-sm btn-primary" style="margin-bottom:5px;" data-toggle="modal" data-target="#opertionDbResource"> <span aria-hidden="true"></span> 整库操作 </a>
+                                </label>
+
+                                <label>
+                                    <select id="id_project" name="project" class="form-control m-b" onchange="change_project()">
+                                        <option value="is-empty" disabled="" selected="selected">- 选择项目 -</option>
+                                        {% for project in user_project_list %}
+                                            <option value="{{ project }}"> {{ project }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label>
+                                    <select id="id_cluster" name="cluster" class="form-control m-b" onchange="change_cluster('filter')">
+                                        <option value="is-empty" disabled="" selected="selected">- 选择实列 -</option>
+                                        {% for clustername in listAllClusterName %}
+                                            <option value="{{ clustername }}"> {{ clustername }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label>
+                                    <select id="id_database" name="database" class="form-control m-b" onchange="change_database()">
+                                        <option value="is-empty" disabled="" selected="selected">- 选择库 -</option>
+                                    </select>
+                                </label>
+                                {#                                <label>#}
+                                {#                                    <a class="btn btn-info btn-sm form-control m-b"> 批量删除 </a>#}
+                                {#                                </label>#}
+                                {##}
+                                {#                                <label>#}
+                                {#                                    <button class="btn btn-info btn-sm form-control m-b"> 批量获取 </button>#}
+                                {#                                </label>#}
+                                {##}
+                                {#                                <label>#}
+                                {#                                    <button class="btn btn-info btn-sm form-control m-b"> 整库获取 </button>#}
+                                {#                                </label>#}
+                            </div>
+
+                            <div class="input-group col-sm-3"  style="float:right;">
+                                <input type="text" class="form-control input-sm" id="search_input" name="keyword" placeholder="请输入表名或项目名搜索">
+                                <div class="input-group-btn">
+                                    <button id='search_btn' type="submit" class="btn btn-sm btn-primary">
+                                        Search
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <table id="show-table">
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 项目整库资源操作模态框-->
+    <div class="modal fade" id="opertionDbResource" tabindex="-1" role="dialog" aria-labelledby="myModalLabel">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                            aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="myModalLabel">配置项目整库资源:</h4>
+                </div>
+                <div class="modal-body">
+
+                    <div class="form-group">
+                        <select id="group_name" name="group_name"
+                                class="selectpicker show-tick form-control bs-select-hidden" data-live-search="true"
+                                data-placeholder="请选择项目组:" required>
+                            <option value="is-empty" disabled="" selected="selected">请选择项目组:</option>
+                            {% for project in user_project_list %}
+                                <option value="{{ project }}"> {{ project }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <select id="cluster_name" name="cluster_name"
+                                class="selectpicker show-tick form-control bs-select-hidden" data-live-search="true"
+                                onchange="change_cluster('get')" data-placeholder="请选择实例:" required>
+                            <option value="is-empty" disabled="" selected="selected">请选择实例:</option>
+                            {% for clustername in listAllClusterName %}
+                                <option value="{{ clustername }}"> {{ clustername }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <select id="db_name" name="db_name" class="selectpicker show-tick form-control bs-select-hidden"
+                                data-name="数据库" data-placeholder="数据库:" data-live-search="true"
+                                required>
+                            <option value="is-empty" disabled="" selected="selected">请选择数据库:</option>
+                        </select>
+                    </div>
+
+                    <div class="text-info">
+                        <li> 整库获取: 获取整库资源成功以后，对应项目组成员都具有该资源的SQL上线权限;</li>
+                        <li> 整库清除: 清除整库资源成功以后，将对应的去除该项目组对该库的所有资源权限;</li>
+                    </div>
+
+                    <div class="modal-footer" style="margin:10px;">
+                        <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                        <button class="btn btn-info btn-sm rightSize detailBtn" type="button" onclick="get_db_all_resource()"><i class="fa fa-check-square"></i> 整库获取 </button>
+                        <button class="btn btn-danger btn-sm rightSize packageBtn" type="button" onclick="del_db_all_resource()"><i class="fa fa-eraser"></i> 整库清除 </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock content %}
+
+
+{% block js %}
+    {% load staticfiles %}
+    <script>
+        function change_cluster(func){
+            if ( func == 'filter'){
+                var cluster_name = $('#id_cluster').val();
+            }else if ( func == 'get'){
+                var cluster_name = $('#cluster_name').val();
+            }
+            var config_type = "change_cluster";
+            $.ajax({
+                url: '/projectresource/',
+                type: 'POST',
+                cache: false,
+                data: {cluster_name:cluster_name, config_type:config_type},
+                dataType: 'json',
+                success: function (data) {
+                    if ( func == 'filter') {
+                        // 配置DB选择信息
+                        $('#id_database').empty();
+                        $('#id_database').append('<option value="is-empty" disabled="" selected="selected">- 选择库 -</option>');
+                        for (var i = 0; i < data.length; i++) {
+                            $('#id_database').append('<option value="' + data[i] + '">' + data[i] + '</option>');
+                        }
+                        //重新加载数据
+                        $('#show-table').bootstrapTable('destroy');
+                        tableInit();
+                    }else if ( func == 'get' ){
+                        // 配置DB选择信息
+                        $('#db_name').empty();
+                        $('#db_name').append('<option value="is-empty" disabled="" selected="selected">请选择数据库:</option>');
+                        for (var i = 0; i < data.length; i++) {
+                            $('#db_name').append('<option value="' + data[i] + '">' + data[i] + '</option>');
+                        }
+                        $('#db_name').selectpicker('render');
+                        $('#db_name').selectpicker('refresh');
+                    }
+                }
+            });
+        }
+
+        function change_database(){
+            //重新加载数据
+            $('#show-table').bootstrapTable('destroy');
+            tableInit();
+        }
+
+        function change_project(){
+            //重新加载数据
+            $('#show-table').bootstrapTable('destroy');
+            tableInit();
+        }
+
+        function tableInit() {
+            var searchVal = $('#search_input').val();
+            var project_name = $('#id_project').val();
+            var cluster_name = $('#id_cluster').val();
+            var db_name = $('#id_database').val();
+            $('#show-table').bootstrapTable({
+                method: 'POST',
+                url: '/projectresource/',
+                contentType: 'application/x-www-form-urlencoded',
+                //contentType: 'application/json; charset=utf-8',
+                dataType: "json",
+                cache: false,
+                toolbar: '#toolbar',                //工具按钮用哪个容器
+                striped: true,                      //是否显示行间隔色
+                clickToSelect: true,              //设置true 将在点击行时，自动选择rediobox 和 checkbox
+                singleSelect: false,              //设置True 将禁止多选
+                pagination: true,               //分页
+                pageNumber: 1,                       //初始化加载第一页，默认第一页
+                pageSize: 10,                       //每页的记录行数（*）
+                pageList: [10, 15, 20, 30],        //可供选择的每页的行数（*）
+                searchAlign: 'left',
+                trimOnSearch: false,
+                //detailView: true,
+                uniqueId: "id",
+                sidePagination: "server", //服务端处理分页
+                queryParams: function (params) {
+                    var temp = {
+                        pageSize: params.limit,   //页面大小
+                        //pageNumber: params.pageNumber,  //页码
+                        search: searchVal,
+                        project_name: project_name,
+                        cluster_name: cluster_name,
+                        db_name: db_name,
+                        offset: params.offset,
+                        limit: params.limit,
+                        sort: params.sort,  //排序列名
+                        sortOrder: params.order,//排位命令（desc，asc）
+                    };
+                    return temp;
+                },
+                columns: [{
+                    field: 'id',
+                    title: '数据编号',
+                    align: 'center'
+                }, {
+                    field: 'cluster_name',
+                    title: '实列名称',
+                    align: 'center'
+                }, {
+                    field: 'db_name',
+                    title: '库名',
+                    align: 'center'
+                }, {
+                    field: 'table_name',
+                    title: '表名',
+                    align: 'center'
+                },{
+                    field: 'group_list',
+                    title: '归属项目',
+                    align: 'center'
+                }, {
+                    field: 'is_in',
+                    title: '获取资源',
+                    align: 'center',
+                    formatter: function (value, row, index) {
+                        var btnGet = '<button class="btn btn-info btn-sm rightSize detailBtn" type="button" onclick="get_resource(\''+ row.id + '\',\''+ index +'\')"><i class="fa fa-check-square"></i> 获取 </button>';
+                        var btnDel = '<button class="btn btn-danger btn-sm rightSize packageBtn" type="button" onclick="del_resource(\''+ row.id + '\',\''+ index  +'\')"><i class="fa fa-eraser"></i> 清除 </button>';
+                        if ( row.is_in == 1 ){
+                            return btnDel;
+                        }else{
+                            return btnGet;
+                        }
+                    }
+                }
+                ]
+            });
+        }
+
+        $(function(){
+            tableInit();
+        });
+
+        //如果点击搜索提交按钮则重新加载数据
+        $("#search_btn").click(function(){
+            $('#show-table').bootstrapTable('destroy');
+            tableInit();
+        });
+
+        //捕捉搜索输入框的回车，如果回车则根据条件重新加载数据
+        $('#search_input').keydown(function(e){
+            if(e.keyCode==13){
+                $('#show-table').bootstrapTable('destroy');
+                tableInit();
+            }
+        });
+
+        // 为当前项目获取该资源
+        function get_resource(resource_id, index){
+            var config_type = "get_resource";
+            var project_name = $('#id_project').val();
+            $.ajax({
+                url: '/projectresource/',
+                type: 'POST',
+                cache: false,
+                data: {resource_id:resource_id, project_name:project_name, config_type:config_type},
+                dataType: 'json',
+                success: function (data) {
+                    if ( data.status == 0 ){
+                        layer.alert(data.msg, { skin: 'layui-layer-lan',closeBtn: 0,anim: 4 });
+                    }else{
+                        //重新加载数据
+                        //var allTableData = $('#show-table').bootstrapTable('getData');
+                        $('#show-table').bootstrapTable('updateRow', {
+                            index: index,
+                            row: { group_list: data.data , is_in: 1 }
+                        });
+                    }
+                }
+            });
+        }
+
+        // 为当前项目获取整库资源
+        function get_db_all_resource(){
+            var config_type = "get_db_all_resource";
+            var group_name = $('#group_name').val();
+            var cluster_name = $('#cluster_name').val();
+            var db_name = $('#db_name').val();
+            $('.dbom-loadzone').show();
+            $('#load_p').html('加载中');
+            $.ajax({
+                url: '/projectresource/',
+                type: 'POST',
+                cache: false,
+                data: {group_name:group_name, cluster_name:cluster_name, db_name: db_name, config_type:config_type},
+                dataType: 'json',
+                success: function (data) {
+                    if ( data.status == 0 ){
+                        layer.alert(data.msg, { skin: 'layui-layer-lan',closeBtn: 0,anim: 4 });
+                    }else{
+                        //重新加载数据
+                        location.reload(true);
+                        {#                        $('#show-table').bootstrapTable('destroy');#}
+                        {#                        tableInit();#}
+                    }
+                },
+                complete: function (){
+                    $('.dbom-loadzone').hide();
+                }
+            });
+        }
+
+
+        // 清除当前项目的该资源
+        function del_resource(resource_id, index){
+            var config_type = "del_resource";
+            var project_name = $('#id_project').val();
+            $.ajax({
+                url: '/projectresource/',
+                type: 'POST',
+                cache: false,
+                data: {resource_id:resource_id, project_name:project_name, config_type:config_type},
+                dataType: 'json',
+                success: function (data) {
+                    if ( data.status == 0 ){
+                        layer.alert(data.msg, { skin: 'layui-layer-lan',closeBtn: 0,anim: 4 });
+                    }else{
+                        //重新加载数据
+                        //var allTableData = $('#show-table').bootstrapTable('getData');
+                        $('#show-table').bootstrapTable('updateRow', {
+                            index: index,
+                            row: { group_list: data.data , is_in: 0 }
+                        });
+                    }
+                }
+            });
+        }
+
+        // 清除当前项目的整库资源
+        function del_db_all_resource() {
+            var config_type = "del_db_all_resource";
+            var group_name = $('#group_name').val();
+            var cluster_name = $('#cluster_name').val();
+            var db_name = $('#db_name').val();
+            $('.dbom-loadzone').show();
+            $('#load_p').html('加载中');
+            $.ajax({
+                url: '/projectresource/',
+                type: 'POST',
+                cache: false,
+                data: {
+                    group_name: group_name,
+                    cluster_name: cluster_name,
+                    db_name: db_name,
+                    config_type: config_type
+                },
+                dataType: 'json',
+                success: function (data) {
+                    if (data.status == 0) {
+                        layer.alert(data.msg, {skin: 'layui-layer-lan', closeBtn: 0, anim: 4});
+                    } else {
+                        //重新加载数据
+                        location.reload(true);
+                        {#                        $('#show-table').bootstrapTable('destroy');#}
+                        {#                        tableInit();#}
+                    }
+                },
+                complete: function (){
+                    $('.dbom-loadzone').hide();
+                }
+            });
+        }
+    </script>
+{% endblock %}

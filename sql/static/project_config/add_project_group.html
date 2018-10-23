@@ -1,0 +1,427 @@
+
+<div class="wrapper wrapper-content animated fadeInRight">
+    <div class="row">
+        <div class="col-sm-12">
+            <div class="ibox-content">
+                <div style="padding-bottom: 35px;">
+                    <div style="float: left;">
+                        <a id="btn_add" type="button" class="btn btn-sm btn-primary" onclick="get_project('add', 0)"
+                           data-toggle="modal" data-target="#addProject">
+                            <span aria-hidden="true"></span>添加项目
+                        </a>
+                        <a id="del_btn" type="button" class="btn btn-sm btn-danger">
+                            <span aria-hidden="true"></span>删除所选
+                        </a>
+                    </div>
+                    <div style="float: right;">
+                        <form id="search_form" method="get" action="" class="pull-right mail-search">
+                            <div class="input-group">
+                                <input type="text" class="form-control input-sm" id="search_input" name="keyword" placeholder="Search">
+                                <div class="input-group-btn">
+                                    <button id='search_btn' type="submit" class="btn btn-sm btn-primary">
+                                        -搜索-
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <table class="table table-striped table-bordered table-hover " id="editable" >
+                    <thead>
+                    <tr>
+                        <th class="text-center">
+                            <input type="checkbox" id="check_all" onclick="checkAll('check_all', 'checked')">
+                        </th>
+                        <th class="text-center">编号</th>
+                        <th class="text-center">项目名称</th>
+                        <th class="text-center">负责人</th>
+                        <th class="text-center">成员数</th>
+                        <th class="text-center">操作</th>
+                    </tr>
+                    </thead>
+                    <tbody id="add_project_group_tbody">
+                    {% for group in groups.object_list %}
+                        <tr>
+                            <td class="text-center">
+                                <input type="checkbox" name="checked" value="{{ group.id }}">
+                            </td>
+                            <td>
+                                {{ group.id }}
+                            </td>
+                            <td>
+                                {{ group.name }}
+                            </td>
+                            <td>
+                                {{ group.leader }}
+                            </td>
+                            <td>
+                                {{ group.members_num }}
+                            </td>
+                            <td>
+                                <a id="btn_edit" type="button" class="btn btn-xs btn-success" data-toggle="modal" data-target="#editProject" onclick="get_project('edit', {{ group.id }})"><span aria-hidden="true"></span>编辑</a>&nbsp
+                                <a class="btn btn-warning btn-xs" onclick="project_del({{ group.id }})">删除</a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                <div class="row">
+                    <div class="col-sm-6">
+                        <div class="dataTables_info" id="editable_info" role="status" aria-live="polite">
+                            Showing {{ groups.start_index }} to {{ groups.end_index }} of {{ p.count }} entries
+                        </div>
+                    </div>
+                    {% include 'paginator.html' %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加项目的模态框-->
+<div class="modal fade" id="addProject" tabindex="-1" role="dialog" aria-labelledby="myModalLabel">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                        aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title" id="myModalLabel">添加新项目组</h4>
+            </div>
+            <div class="modal-body">
+
+                <div>
+                    <input type="text" style="width:100%;" class="form-control" id="add_group_name" placeholder="请输入项目名称">
+                </div>
+
+                <div style="margin-top:10px;margin-bottom:10px">
+                    <select id="add_project_auditors" name="project" onchange="change_auditors('add')"
+                            class="selectpicker show-tick form-control bs-select-hidden"
+                            data-name="项目负责人" data-placeholder="项目负责人:" data-live-search="true"
+                            required>
+                        <option value="is-empty" disabled="" selected="selected">选择负责人</option>
+                        {% for user in user_list %}
+                            <option value="{{ user.username }}">{{ user.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div style="margin-top:10px;margin-bottom:10px;">
+                    <input id="comment" name="comment" placeholder="添加项目组成员:" type="text" style="width:100%; cursor:default;" class="form-control"  aria-hidden="true" disabled>
+                </div>
+
+                <div class="wrapper wrapper-content animated fadeInRight">
+                    <div class="row">
+                        <div class="col-sm-12">
+                            <div class="form-group" style="width:100%;">
+                                <div class="col-sm-4" style="margin-left:15%;">
+                                    <select id="add_users_noselected" name="add_users_noselected" size="12" class="form-control m-b" style="width:100%;" multiple>
+                                    </select>
+                                </div>
+                                <div class="col-sm-1">
+                                    <div class="btn-group" style="margin-top: 50px;">
+                                        <button type="button" class="btn btn-white" onclick="move('add_users_noselected', 'add_users_selected')"><i class="fa fa-chevron-right"></i></button>
+                                        <button type="button" class="btn btn-white" onclick="move('add_users_selected', 'add_users_noselected')"><i class="fa fa-chevron-left"></i> </button>
+                                    </div>
+                                </div>
+                                <div class="col-sm-4">
+                                    <div>
+                                        <select id="add_users_selected" name="add_users_selected" class="form-control m-b" size="12" style="width:100%;" multiple>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="margin-top:10px;">
+                                <input placeholder="PS：以上为项目组配置信息" type="text" style="width:100%; cursor:default;" class="form-control" disabled>
+                            </div>
+
+                            <div class="text-info">
+                                <li>项目负责人，为该项目的负责人，具有项目资源管理的权限;</li>
+                                <li>项目组成员，加入项目组将具有该项目的所有权限和资源配置;</li>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer" style="margin:10px;">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-success" onclick="project_add()">添加</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 更新项目的模态框-->
+<div class="modal fade" id="editProject" tabindex="-1" role="dialog" aria-labelledby="myModalLabel">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span
+                        aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title" id="myModalLabel">修改项目组信息</h4>
+            </div>
+            <div class="modal-body">
+                <!-- 用来接收值用的 -->
+                <div>
+                    <input type="text" style="display:none;" class="form-control" id="edit_group_id" >
+                </div>
+
+                <div>
+                    <input type="text" style="width:100%;" class="form-control" id="edit_group_name" placeholder="请输入项目名称">
+                </div>
+
+                <div style="margin-top:10px;margin-bottom:10px">
+                    <select id="edit_project_auditors" name="project" onchange="change_auditors('edit')" class="selectpicker show-tick form-control bs-select-hidden">
+
+                    </select>
+                </div>
+
+                <div style="margin-top:10px;margin-bottom:10px;">
+                    <input placeholder="更新项目组成员:" type="text" style="width:100%; cursor:default;" class="form-control"  aria-hidden="true" disabled>
+                </div>
+
+                <div class="wrapper wrapper-content animated fadeInRight">
+                    <div class="row">
+                        <div class="col-sm-12">
+                            <div class="form-group" style="width:100%;">
+                                <div class="col-sm-4" style="margin-left:15%;">
+                                    <select id="edit_users_noselected" name="edit_users_noselected" size="12" class="form-control m-b" style="width:100%;" multiple>
+                                    </select>
+                                </div>
+                                <div class="col-sm-1">
+                                    <div class="btn-group" style="margin-top: 50px;">
+                                        <button type="button" class="btn btn-white" onclick="move('edit_users_noselected', 'edit_users_selected')"><i class="fa fa-chevron-right"></i></button>
+                                        <button type="button" class="btn btn-white" onclick="move('edit_users_selected', 'edit_users_noselected')"><i class="fa fa-chevron-left"></i> </button>
+                                    </div>
+                                </div>
+                                <div class="col-sm-4">
+                                    <div>
+                                        <select id="edit_users_selected" name="edit_users_selected" class="form-control m-b" size="12" style="width:100%;" multiple>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="margin-top:10px;">
+                                <input placeholder="PS：以上为项目组配置信息" type="text" style="width:100%; cursor:default;" class="form-control" disabled>
+                            </div>
+
+                            <div class="text-info">
+                                <li>项目负责人，为该项目的负责人，具有项目资源管理的权限;</li>
+                                <li>项目组成员，加入项目组将具有该项目的所有权限和资源配置;</li>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer" style="margin:10px;">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-success" onclick="project_edit()">更新</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function checkAll(id, name){
+        var checklist = document.getElementsByName(name);
+        if(document.getElementById(id).checked)
+        {
+            for(var i=0;i<checklist.length;i++)
+            {
+                checklist[i].checked = 1;
+            }
+        }else{
+            for(var j=0;j<checklist.length;j++)
+            {
+                checklist[j].checked = 0;
+            }
+        }
+    }
+
+    function project_add(){
+        // 设置所有选项为选中状态
+        $('#add_users_selected option').each(function(){
+            $(this).prop('selected', true)
+        });
+        // 定义数组存储用户数据
+        var users_selected = new Array();
+        $("#add_users_selected option:selected").each(function(){
+            users_selected.push($(this).text());
+        });
+        var project_name = $('#add_group_name').val();
+        var project_auditors = $('#add_project_auditors').val();
+        $.ajax({
+            url: '/configGroup/',
+            type: 'POST',
+            cache: false,
+            traditional: true,
+            data: {project_name: project_name, users_selected: users_selected, project_auditors: project_auditors, operation_type: 'project_add'},
+            dataType: 'json',
+            success: function (data) {
+                if ( data.status == 1 ){
+                    location.reload(true);
+                }else{
+                    layer.alert(data.msg, { skin: 'layui-layer-lan',closeBtn: 0,anim: 4 });
+                }
+            }
+        });
+    }
+
+    function get_project(get_type, projectid){
+        $.ajax({
+            url: '/configGroup/',
+            type: 'POST',
+            cache: false,
+            data: {project_id: projectid, get_type:get_type, operation_type: 'get_project'},
+            dataType: 'json',
+            success: function (data) {
+                if (data.status == 1) {
+                    var data_info = data.data;
+                    var user_list = data_info.user_list;
+                    var user_list_select = data_info.user_list_select;
+                    var user_list_noselect = data_info.user_list_noselect;
+                    if ( get_type == 'edit' ){
+                        var users_noselected = $('#edit_users_noselected');
+                        var users_selected = $('#edit_users_selected');
+                        $("#edit_group_id").val(data_info.group_id);
+                        $('#edit_group_name').val(data_info.group_name);
+                        $("#edit_project_auditors").empty();
+                        $('<option value="is-empty" disabled="" selected="selected">选择负责人</option>').appendTo($("#edit_project_auditors"));
+                        for ( var i = 0; i < user_list.length ; i++ ){
+                            if ( data_info.group_leader == user_list[i].username ){
+                                $("<option selected='selected' value=\'" + user_list[i].username + "\'>" + user_list[i].username + "</option>").appendTo($("#edit_project_auditors"))
+
+                            } else{
+                                $("<option value=\'" + user_list[i].username + "\'>" + user_list[i].username + "</option>").appendTo($("#edit_project_auditors"))
+
+                            }
+                        }
+                    }else if ( get_type == 'add' ){
+                        var users_noselected = $('#add_users_noselected');
+                        var users_selected = $('#add_users_selected');
+                    }
+
+                    // 配置项目成员信息
+                    // 未选信息
+                    users_noselected.empty();
+                    for (var i = 0; i < user_list_noselect.length; i++) {
+                        users_noselected.append('<option value="' + user_list_noselect[i] + '">' + user_list_noselect[i] + '</option>')
+                    }
+                    // 已选信息
+                    users_selected.empty();
+                    for (var i = 0; i < user_list_select.length; i++) {
+                        users_selected.append('<option value="' + user_list_select[i] + '">' + user_list_select[i] + '</option>')
+                    }
+
+                    $("#edit_project_auditors").selectpicker('refresh');
+                    $("#edit_project_auditors").selectpicker('render');
+                }
+            },
+            error: function (XMLHttpRequest, textStatus, errorThrown) {
+                layer.alert(errorThrown, { skin: 'layui-layer-lan',closeBtn: 0,anim: 4 });
+            }
+        });
+    }
+
+    function project_edit(){
+        // 设置所有选项为选中状态
+        $('#edit_users_selected option').each(function(){
+            $(this).prop('selected', true)
+        });
+        // 定义数组存储用户数据
+        var users_selected = new Array();
+        $("#edit_users_selected option:selected").each(function(){
+            users_selected.push($(this).text());
+        });
+        var edit_group_id = $('#edit_group_id').val();
+        var edit_project_name = $('#edit_group_name').val();
+        var edit_project_auditors = $('#edit_project_auditors').val();
+
+        console.log(users_selected);
+        $.ajax({
+            url: '/configGroup/',
+            type: 'POST',
+            cache: false,
+            traditional: true,
+            data: {edit_group_id: edit_group_id, users_selected: users_selected, edit_project_name: edit_project_name, edit_project_auditors: edit_project_auditors,
+                operation_type: 'project_edit'},
+            dataType: 'json',
+            success: function (data) {
+                if ( data.status == 1 ){
+                    location.reload(true);
+                }else{
+                    layer.alert(data.msg, { skin: 'layui-layer-lan',closeBtn: 0,anim: 4 });
+                }
+            }
+        });
+    }
+
+    function project_del(projectid) {
+        layer.confirm("确定删除", {skin: 'layui-layer-molv', closeBtn: 0, btn: ['确定', '取消']}, function () {
+            $.ajax({
+                url: '/configGroup/',
+                type: 'POST',
+                cache: false,
+                data: {project_id: projectid, operation_type: 'project_del'},
+                dataType: 'json',
+                success: function (data) {
+                    if (data.status == 1) {
+                        location.reload(true);
+                    } else {
+                        layer.alert(data.msg, {skin: 'layui-layer-lan', closeBtn: 0, anim: 4});
+                    }
+                },
+                error: function (XMLHttpRequest, textStatus, errorThrown) {
+                    layer.alert(errorThrown, {skin: 'layui-layer-lan', closeBtn: 0, anim: 4});
+                }
+            });
+        });
+    }
+
+    function change_auditors(opera_type){
+        if ( opera_type == 'edit' ){
+            var auditors = $('#edit_project_auditors').val();
+            // 先删除之前的负责人信息
+            var select_user_disabled = $('#edit_users_selected option[disabled="disabled"]').val();
+            $('#edit_users_selected option[disabled="disabled"]').remove();
+            $('#edit_users_noselected').append('<option value="' + select_user_disabled + '">' + select_user_disabled + '</option>');
+            // 判断项目负责人是否在已经选择的项目成员里面，如果在则修改属性为disabled为不可删除，如果没有则添加
+            var select_user_auditors = $('#edit_users_selected option[value=\"'+auditors+'\"]').val();
+            if ( select_user_auditors == undefined ){
+                // 添加新的负责人信息
+                $('#edit_users_selected').append('<option style="color:blue;" disabled="disabled" value="' + auditors + '">' + auditors + '</option>');
+                $('#edit_users_noselected option[value=\"'+ auditors +'\"]').remove();
+            }else{
+                $('#edit_users_selected option[value=\"'+auditors+'\"]').attr('disabled', true);
+                $('#edit_users_selected option[value=\"'+auditors+'\"]').css('color', 'blue');
+            }
+
+        }else if (  opera_type == 'add' ){
+            var auditors = $('#add_project_auditors').val();
+            // 为了保证只有项目负责人才是禁止不可删除选项，在切换项目负责人之前先将之前选的项目负责人信息清除掉
+            var select_user_disabled = $('#add_users_selected option[disabled="disabled"]').val();
+            if ( select_user_disabled != undefined ){
+                $('#add_users_selected option[disabled="disabled"]').remove();
+                $('#add_users_noselected').append('<option value="' + select_user_disabled + '">' + select_user_disabled + '</option>')
+            }
+            // 先清除已经选择的项目成员与项目负责人重复的信息，再添加项目负责人到已选择成员信息里面且为禁止删除选项
+            $('#add_users_selected option[value=\"'+ auditors +'\"]').remove();
+            $('#add_users_selected').append('<option style="color:blue;" disabled="disabled" value="' + auditors + '">' + auditors + '</option>');
+            $('#add_users_noselected option[value=\"'+ auditors +'\"]').remove();
+        }
+
+    }
+
+    function move(from, to, from_o, to_o) {
+        $("#" + from + " option").each(function () {
+            if ($(this).prop("selected") == true) {
+                $("#" + to).append(this);
+                if( typeof from_o !== 'undefined'){
+                    $("#"+to_o).append($("#"+from_o +" option[value='"+this.value+"']"));
+                }
+            }
+        });
+    }
+</script>

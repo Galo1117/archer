@@ -46,13 +46,15 @@ def add_sqlcronjob(request):
         context = {'errMsg': '必须为审核通过或者定时执行状态'}
         return render(request, 'error.html', context)
 
-    run_date = datetime.datetime.strptime(run_date, "%Y-%m-%d %H:%M:%S")
+    run_date = str(datetime.datetime.strptime(run_date, "%Y-%m-%d %H:%M:%S"))
     url = getDetailUrl(request) + str(workflowId) + '/'
     job_id = Const.workflowJobprefix['sqlreview'] + '-' + str(workflowId)
 
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_jobstore(DjangoJobStore(), "default")
+        # mysql_add = "mysql://archer:aibei1010!!@localhost:3308/archer3"
+        # scheduler.add_jobstore(SQLAlchemyJobStore(url=mysql_add))
         scheduler.add_job(execute_job, 'date', run_date=run_date, args=[workflowId, url], id=job_id,
                           replace_existing=True)
         register_events(scheduler)
@@ -67,9 +69,10 @@ def add_sqlcronjob(request):
         context = {'errMsg': '任务添加失败，错误信息：' + str(e)}
         return render(request, 'error.html', context)
     else:
-        logger.debug('add_sqlcronjob:' + job_id + "run_date:" + run_date.strftime('%Y-%m-%d %H:%M:%S'))
+        # logger.debug('add_sqlcronjob:' + job_id + "run_date:" + run_date.strftime('%Y-%m-%d %H:%M:%S'))
+        logger.debug('add_sqlcronjob:' + job_id + "run_date:" + run_date)
 
-    return HttpResponseRedirect(reverse('sql:detail', args=(workflowId,)))
+    return HttpResponseRedirect(reverse('sql:detail', kwargs={'workflowId':workflowId, 'workflowType':0}))
 
 
 # 删除sql执行任务

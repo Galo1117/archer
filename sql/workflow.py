@@ -1,14 +1,17 @@
 # -*- coding: UTF-8 -*-
 import simplejson as json
-
+import time
 from django.core import serializers
 from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
+from archer.settings import HASH_KEY, WECHAT_CORPID, WECHAT_SECRET, WECHAT_URL
 from .sendmail import MailSender
+from .sendwechat import weChat
 from .const import WorkflowDict
 from .models import users, WorkflowAudit, WorkflowAuditDetail, WorkflowAuditSetting, Group, workflow, \
     QueryPrivilegesApply
+from .pycrypt import MyCrypt
 
 DirectionsOb = WorkflowDict()
 MailSenderOb = MailSender()
@@ -133,10 +136,16 @@ class Workflow(object):
                             + "\n工单详情：" + email_info
             MailSenderOb.sendEmail(email_title, email_content, [email_reciver], listCcAddr=listCcAddr)
 
+        # 发送微信通知
+        to_audit_user = auditInfo.current_audit_user
+        self.auditsendwechat(request, auditInfo, to_audit_user, workflow_type_display)
         return result
 
     # 工单审核
     def auditworkflow(self, request, audit_id, audit_status, audit_user, audit_remark):
+        # 获取用户信息
+        loginUser = request.session.get('login_username', False)
+        loginUserOb = users.objects.get(username=loginUser)
         result = {'status': 0, 'msg': 'ok', 'data': 0}
         auditInfo = WorkflowAudit.objects.get(audit_id=audit_id)
 
@@ -160,7 +169,7 @@ class Workflow(object):
                 raise Exception(result['msg'])
 
             # 判断当前审核人是否有审核权限
-            if auditInfo.current_audit_user != audit_user:
+            if auditInfo.current_audit_user != audit_user and loginUserOb.is_superuser != 1:
                 result['msg'] = '你无权操作,请联系管理员'
                 raise Exception(result['msg'])
 
@@ -201,12 +210,12 @@ class Workflow(object):
             audit_detail_result.save()
         elif audit_status == WorkflowDict.workflow_status['audit_reject']:
             # 判断当前工单是否为待审核状态
-            if auditInfo.current_status != DirectionsOb.workflow_status['audit_wait']:
+            if auditInfo.current_status != DirectionsOb.workflow_status['audit_wait']  and loginUserOb.role != 'DBA':
                 result['msg'] = '工单不是待审核状态，请返回刷新'
                 raise Exception(result['msg'])
 
             # 判断当前审核人是否有审核权限
-            if auditInfo.current_audit_user != audit_user:
+            if auditInfo.current_audit_user != audit_user and loginUserOb.role != 'DBA':
                 result['msg'] = '你无权操作,请联系管理员'
                 raise Exception(result['msg'])
 
@@ -229,7 +238,7 @@ class Workflow(object):
         elif audit_status == WorkflowDict.workflow_status['audit_abort']:
             # 判断当前工单是否为待审核/审核通过状态
             if auditInfo.current_status != DirectionsOb.workflow_status['audit_wait'] and \
-                    auditInfo.current_status != DirectionsOb.workflow_status['audit_success']:
+                            auditInfo.current_status != DirectionsOb.workflow_status['audit_success']:
                 result['msg'] = '工单不是待审核态/审核通过状态，请返回刷新'
                 raise Exception(result['msg'])
 
@@ -299,6 +308,15 @@ class Workflow(object):
                                 + str(audit_id) + "\n工单名称： " + auditInfo.workflow_title \
                                 + "\n提醒：提交人主动终止流程"
                 MailSenderOb.sendEmail(email_title, email_content, [email_reciver])
+
+        # 发送微信通知下级审核人
+        # 重新获取审核状态
+        auditInfo = WorkflowAudit.objects.get(audit_id=audit_id)
+        # 给下级审核人发送邮件
+        if auditInfo.current_status == DirectionsOb.workflow_status['audit_wait']:
+            to_audit_user = auditInfo.current_audit_user
+            self.auditsendwechat(request, auditInfo, to_audit_user, workflow_type_display)
+
         # 返回审核结果
         result['data'] = {'workflow_status': auditresult.current_status}
         return result
@@ -398,3 +416,64 @@ class Workflow(object):
             auditor_list = auditors.audit_users.split(',')
             result['data'] = auditor_list
         return result
+
+    # 发送审核邮件
+    def auditsendmail(self, request, auditInfo, to_audit_user, workflow_type_display):
+        if hasattr(settings, 'MAIL_ON_OFF') is True and getattr(settings, 'MAIL_ON_OFF') == 'on' \
+                and auditInfo.current_status == DirectionsOb.workflow_status['audit_wait']:
+            # 邮件内容
+            current_audit_userOb = users.objects.get(username=to_audit_user)
+            email_reciver = current_audit_userOb.email
+            email_title = "[%s]:新的工单申请提醒#%s" % (workflow_type_display, str(auditInfo.workflow_title))
+            # email_content = "发起人：" + auditInfo.create_user + "\n审核人：" + auditInfo.audit_users \
+            #                 + "\n工单地址：" + request.scheme + "://" + request.get_host() + "/workflowdetail/" \
+            #                 + str(auditInfo.audit_id) + "\n工单名称： " + auditInfo.workflow_title
+
+            #########################################
+            uuid = current_audit_userOb.uuid
+            timestamp = int(time.time())
+            audit_id = str(auditInfo.audit_id)
+            hash_text = "%s,%s,%s" % (timestamp, uuid, audit_id)
+            # 加密
+            crypter = MyCrypt(HASH_KEY)
+            hash_encode = crypter.encrypt(hash_text).decode(encoding="utf8")
+            host_addrs = settings.HASH_PROXY_HOST
+            workflow_addrs = host_addrs + "/workflowsdetailhash/?timestamp=" + str(timestamp) + "&hash=" + str(hash_encode)
+            email_content = "发起人："+ auditInfo.create_user +"\n审核人："+ auditInfo.audit_users +"\n工单名称：" + \
+                            auditInfo.workflow_title +"\n工单地址："+ workflow_addrs
+            try:
+                MailSenderOb.sendEmail(email_title, email_content, [email_reciver])
+                result = {'status': 0, 'msg': '邮件发送成功', 'data': 0}
+            except Exception as e:
+                result = {'status': 1, 'msg': '邮件发失败', 'data': e}
+        return result
+
+    # 发送微信审核信息
+    def auditsendwechat(self, request, auditInfo, to_audit_user, workflow_type_display):
+        if hasattr(settings, 'WECHAT_ON_OFF') is True and getattr(settings, 'WECHAT_ON_OFF') == 1 \
+                and auditInfo.current_status == DirectionsOb.workflow_status['audit_wait']:
+            # 获取申请用户信息
+            applyuser = request.session.get('login_username', False)
+            apply_userOb = users.objects.get(username=applyuser)
+            user_display = apply_userOb.display
+            # 获取审核人用户信息
+            current_audit_userOb = users.objects.get(username=to_audit_user)
+            # 获取当前时间
+            now_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time()))
+            uuid = current_audit_userOb.uuid
+            timestamp = int(time.time())
+            audit_id = str(auditInfo.audit_id)
+            hash_text = "%s,%s,%s" % (timestamp, uuid, audit_id)
+            # 加密
+            crypter = MyCrypt(HASH_KEY)
+            hash_encode = crypter.encrypt(hash_text).decode(encoding="utf8")
+            host_addrs = settings.HASH_PROXY_HOST
+            workflow_addrs = host_addrs + "/workflowsdetailhash/?timestamp=" + str(timestamp) + "&hash=" + str(hash_encode)
+            # 定义微信告警传值参数
+            Corpid = WECHAT_CORPID
+            Secret = WECHAT_SECRET
+            url = WECHAT_URL
+            wx_conntent = "[%s][申请人:%s 申请时间:%s][审核地址:%s]" %(workflow_type_display, user_display, now_time, workflow_addrs)
+            wx_list = to_audit_user
+            wechat = weChat(url, Corpid, Secret)
+            wx_send_result = wechat.send_message(wx_list, '', wx_conntent, 1000003)

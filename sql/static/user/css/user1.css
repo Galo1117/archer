@@ -54,3 +54,9 @@
     background-color: #f5f5f5;
     border-right: 1px solid #eee;
 }
+
+
+.dbom-loadzone{position: fixed; z-index: 9999; text-align: center; height: 100%; width: 100%;background: url('/static/admin/img/loading_bg.png') repeat;display: none}
+.dbom-loadzone .dbom-loading{margin: 0 auto; height: 106px; width: 106px; margin: 180px auto 0 auto; background-color: #fff;}
+.dbom-loadzone .dbom-loading>img{padding-top: 14px; width: 50%;}
+.dbom-loadzone .dbom-loading>p{margin: 0; padding: 0; color: #000; font-size: 14px; line-height: 28px;}

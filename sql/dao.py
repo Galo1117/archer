@@ -1,9 +1,8 @@
 # -*- coding: UTF-8 -*- 
 
 import MySQLdb
-
+import signal, os, sys
 from django.db import connection
-
 
 class Dao(object):
     _CHART_DAYS = 90
@@ -172,3 +171,108 @@ class Dao(object):
         cursor.execute(sql)
         result = cursor.fetchall()
         return result
+
+
+class ProcessQuery(object):
+    '''
+    Mysql查询/结束查询
+    '''
+    def __init__(self, masterHost, masterPort, masterUser, masterPassword, dbName):
+        self.masterHost = masterHost
+        self.masterPort = masterPort
+        self.masterUser = masterUser
+        self.masterPassword = masterPassword
+        self.dbName = dbName
+        self.query_result = {}
+        self.workers = {}
+        self.END_SIGNAL = "\n"
+
+    def connect(self):
+        con = MySQLdb.connect(host=self.masterHost, db=self.dbName, user=self.masterUser, passwd=self.masterPassword, port=self.masterPort, charset='utf8mb4')
+        return con
+
+    # 获取当前查询进程的ID
+    def get_mysql_pid(self, con):
+        cur = con.cursor()
+        cur.execute('SELECT CONNECTION_ID()')
+        # 执行完关闭游标
+        cur.close()
+        return cur.fetchall()[0][0]
+
+    #  根据查询ID结束该进程
+    def kill_mysql_pid(self, con, mysql_pid):
+        cur = con.cursor()
+        cur.execute('KILL %s;' % mysql_pid)
+        # 执行完关闭游标
+        cur.close()
+
+    def run(self, conn, query, limit_num):
+        result = {}
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            effect_row = cursor.execute(query)
+            rows = cursor.fetchmany(size=int(limit_num))
+            fields = cursor.description
+
+            column_list = []
+            for i in fields:
+                column_list.append(i[0])
+            result = {}
+            result['column_list'] = column_list
+            result['rows'] = rows
+            result['effect_row'] = effect_row
+        except MySQLdb.Warning as w:
+            print(str(w))
+            result['Warning'] = str(w)
+        except MySQLdb.Error as e:
+            print(str(e))
+            result['Error'] = str(e)
+        finally:
+            if cursor is not None:
+                cursor.close()
+        # 返回处理数据
+        return result
+
+    def waitall(self):
+        for pid in self.workers.keys():
+            try:
+                os.waitpid(pid, 0)
+            except:
+                print ("waitpid: interrupted exception")
+
+    def main(self, sql, limit_num, cache, query_uuid):
+        r_num, w_num = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(r_num)
+            wpipe = os.fdopen(w_num, 'w')
+            con = self.connect()
+            # 向父进程程传递子进程的mysql进程id
+            mysql_pid = "%d\n" % self.get_mysql_pid(con)
+            wpipe.write(mysql_pid)
+            wpipe.flush()
+            try:
+               self.query_result = self.run(con, sql, limit_num)
+               # 处理完数据，关闭数据库连接
+               con.close()
+            except:
+                print ("run: interrupted exception")
+                sys.exit(0)
+        else:
+            os.close(w_num)
+            rpipe = os.fdopen(r_num, 'r')
+            mysql_pid = rpipe.readline()
+            mysql_pid = mysql_pid[:-1]
+            # 保存子进程的mysql进程ID
+            self.workers[pid] = mysql_pid
+            cache.set(query_uuid, mysql_pid)
+            # print ("DAO###########query_uuid:%s mysql_pid:%s" %(query_uuid, cache.get(query_uuid)))
+
+        self.waitall()
+        return self.query_result
+
+
+
+    # if __name__ == '__main__':
+    #     main(sql, limit_num)

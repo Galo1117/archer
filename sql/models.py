@@ -11,7 +11,9 @@ from .aes_decryptor import Prpcrypt
 # 2.审核人：可以审核并执行SQL上线单的管理者、高级工程师、系统管理员们。
 class users(AbstractUser):
     display = models.CharField('显示的中文名', max_length=50)
+    uuid = models.CharField('用户UUID', max_length=100, default='NULL')
     role = models.CharField('角色', max_length=20, choices=(('工程师', '工程师'), ('DBA', 'DBA')), default='工程师')
+    is_ldapuser = models.BooleanField('ldap用戶', default=False)
 
     def __str__(self):
         return self.username
@@ -48,6 +50,7 @@ class master_config(models.Model):
 class Group(models.Model):
     group_id = models.AutoField('项目组ID', primary_key=True)
     group_name = models.CharField('项目组名称', max_length=100, unique=True)
+    group_leader = models.CharField('项目负责人', max_length=30)
     group_parent_id = models.BigIntegerField('父级id', default=0)
     group_sort = models.IntegerField('排序', default=1)
     group_level = models.IntegerField('层级', default=1)
@@ -61,6 +64,19 @@ class Group(models.Model):
     class Meta:
         verbose_name = u'项目组配置'
         verbose_name_plural = u'项目组配置'
+
+
+# 项目组与用户对于关系表
+class UserGroup(models.Model):
+    group_name = models.CharField('项目组名', max_length=100)
+    user_name = models.CharField('项目成员', max_length=30)
+    comment = models.CharField('备注信息', max_length=160, blank=True, null=True)
+
+    def __unicode__(self):
+        return self.name
+
+    class Meta:
+        unique_together = ("group_name", "user_name")
 
 
 # 存放各个SQL上线工单的详细内容，可定期归档或清理历史数据，也可通过alter table workflow row_format=compressed; 来进行压缩
@@ -228,9 +244,34 @@ class QueryPrivileges(models.Model):
         return self.privilege_id
 
     class Meta:
+        index_together = ("user_name", "cluster_name", "db_name", "table_name")
         db_table = 'query_privileges'
         verbose_name = u'查询权限记录表'
         verbose_name_plural = u'查询权限记录表'
+
+
+# 项目组权限关系表
+class GroupQueryPrivileges(models.Model):
+    privilege_id = models.AutoField(primary_key=True)
+    group_name = models.CharField('项目组名称', max_length=30)
+    cluster_name = models.CharField('实例名称', max_length=50)
+    db_name = models.CharField('数据库', max_length=200)
+    table_name = models.CharField('表', max_length=200)
+    valid_date = models.DateField('有效时间')
+    limit_num = models.IntegerField('行数限制', default=100)
+    priv_type = models.IntegerField('权限类型', choices=((1, 'DATABASE'), (2, 'TABLE'),), default=2)
+    is_deleted = models.IntegerField('是否删除', default=0)
+    create_time = models.DateTimeField(auto_now_add=True)
+    sys_time = models.DateTimeField(auto_now=True)
+
+    def __int__(self):
+        return self.privilege_id
+
+    class Meta:
+        index_together = ("group_name", "cluster_name", "db_name", "table_name")
+        db_table = 'group_query_privileges'
+        verbose_name = u'组查询权限记录表'
+        verbose_name_plural = u'组查询权限记录表'
 
 
 # 记录在线查询sql的日志
@@ -442,3 +483,20 @@ class SlowQueryHistory(models.Model):
         unique_together = ('hostname_max', 'ts_min')
         verbose_name = u'慢日志明细'
         verbose_name_plural = u'慢日志明细'
+
+
+# 项目资源管理
+class ProjectResource(models.Model):
+    cluster_name = models.CharField('实例名称', max_length=50)
+    db_name = models.CharField('库名', max_length=64)
+    table_name = models.CharField('表名', max_length=64)
+    group_list = models.CharField('项目组列表', max_length=512)
+    sync_switch = models.IntegerField('资源同步开关', choices=((0, '不用同步'), (1, '需要同步'),), default=1)
+    create_time = models.DateTimeField('插入时间',auto_now_add=True)
+    update_time = models.DateTimeField('更新时间',auto_now=True)
+
+    class Meta:
+        unique_together = ("cluster_name", "db_name",'table_name')
+        db_table = 'project_resource'
+        verbose_name = u'项目资源管理'
+        verbose_name_plural = u'项目资源配置'

@@ -260,7 +260,13 @@
                     title: '工单名称',
                     field: 'title',
                     formatter: function (value, row, index) {
-                        return "<a href='/queryapplydetail/" + row.apply_id + "/'>" + value + "</a>";
+                        if (value.length > 15) {
+                            var title = value.substr(0, 15) + '...';
+                            return "<a href='/queryapplydetail/" + row.apply_id + "/0/'>" + title + "</a>";
+                        }
+                        else {
+                            return "<a href='/queryapplydetail/" + row.apply_id + "/0/'>" + value + "</a>";
+                        }
                     }
                 }, {
                     title: '实例',
@@ -346,6 +352,7 @@
                 url: "/getdbNameList/",
                 dataType: "json",
                 data: {
+                    query_request_type: "query_permission_application",
                     cluster_name: $("#cluster_name").val()
                 },
                 complete: function () {
@@ -382,6 +389,7 @@
                 url: "/getTableNameList/",
                 dataType: "json",
                 data: {
+                    query_request_type: "query_permission_application",
                     cluster_name: $("#cluster_name").val(),
                     db_name: $("#db_name").val()
                 },

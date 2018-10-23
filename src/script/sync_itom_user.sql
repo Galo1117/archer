@@ -1,0 +1,1 @@
+SELECT id,PASSWORD,last_login,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined,`name` AS 'display',`uuid`,CASE role  WHEN 'QU' THEN '审核人' WHEN  'DBA' THEN 'DBA' ELSE '工程师' END AS role FROM juser_user AS sql_users;
